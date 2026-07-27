@@ -3,13 +3,20 @@ import json
 import uuid
 import webbrowser
 from dotenv import load_dotenv
-from snaptrade_client import SnapTrade
+from snaptrade_client import SnapTrade, SnapTradeAuth
 
 load_dotenv()
 
+# Personal SnapTrade keys (as opposed to commercial/partner keys) come with exactly
+# one pre-provisioned user baked into the key itself — no separate userId/userSecret
+# needed for account/position calls. Must construct via `auth=`, not raw
+# client_id=/consumer_key= kwargs, or the SDK silently skips request signing and
+# every authenticated call 403s.
 client = SnapTrade(
-    client_id=os.environ.get("SNAPTRADE_CLIENT_ID"),
-    consumer_key=os.environ.get("SNAPTRADE_CONSUMER_KEY"),
+    auth=SnapTradeAuth.personal_api_key(
+        client_id=os.environ.get("SNAPTRADE_CLIENT_ID"),
+        consumer_key=os.environ.get("SNAPTRADE_CONSUMER_KEY"),
+    )
 )
 
 SNAPTRADE_USER_FILE = "snaptrade_user.json"
@@ -17,10 +24,6 @@ SNAPTRADE_USER_FILE = "snaptrade_user.json"
 
 def register_user() -> dict:
     """Register yourself once as a SnapTrade user. This only needs to happen one time, ever."""
-    print("DEBUG — client_id being used:", client.configuration.username)
-    print("DEBUG — consumer_key being used (first/last 4):",
-          client.configuration.password[:4], "...", client.configuration.password[-4:])
-
     user_id = str(uuid.uuid4())
     response = client.authentication.register_snap_trade_user(body={"userId": user_id})
 
@@ -37,6 +40,11 @@ def register_user() -> dict:
 
 
 def load_or_register_user() -> dict:
+    env_user_id = os.environ.get("SNAPTRADE_USER_ID")
+    env_user_secret = os.environ.get("SNAPTRADE_USER_SECRET")
+    if env_user_id and env_user_secret:
+        return {"userId": env_user_id, "userSecret": env_user_secret}
+
     if os.path.exists(SNAPTRADE_USER_FILE):
         with open(SNAPTRADE_USER_FILE, "r") as f:
             return json.load(f)

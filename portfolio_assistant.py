@@ -1,62 +1,23 @@
-import subprocess
-import re
 import yfinance as yf
 
-
-def strip_ansi(text: str) -> str:
-    """Remove terminal color codes so we can parse the plain text table."""
-    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-    return ansi_escape.sub('', text)
-
-
-def parse_money(value: str) -> float:
-    return float(value.replace("$", "").replace(",", ""))
+from snaptrade_connect import client
 
 
 def get_snaptrade_positions() -> list[dict]:
-    """Runs the SnapTrade CLI in the background and parses your real positions."""
-    try:
-        result = subprocess.run(
-            ["snaptrade", "positions", "--all"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-    except FileNotFoundError:
-        print("Couldn't find the 'snaptrade' command. Is the CLI installed? (npm install -g @snaptrade/snaptrade-cli)")
-        return []
-
-    if result.returncode != 0:
-        print("Error running snaptrade CLI:", result.stderr)
-        return []
-
-    output = strip_ansi(result.stdout)
-    lines = output.split("\n")
+    """Pulls your real positions directly via the SnapTrade SDK — portable to any
+    host, since it only needs the .env-sourced API keys (a personal key's single
+    user is implicit in the key itself, no separate user credentials needed)."""
+    accounts = client.account_information.list_user_accounts().body
 
     positions = []
-    for line in lines:
-        line = line.strip()
-        if not line.startswith("│"):
-            continue
-
-        cells = [cell.strip() for cell in line.split("│")]
-        cells = [c for c in cells if c != ""]
-
-        if len(cells) != 6:
-            continue
-        if cells[0] == "Symbol":
-            continue  # skip header row
-
-        symbol, quantity, market_price, cost_basis, market_value, pnl = cells
-
-        positions.append({
-            "ticker": symbol,
-            "shares": float(quantity),
-            "cli_price": parse_money(market_price),
-            "cost_basis": parse_money(cost_basis),
-            "cli_market_value": parse_money(market_value),
-            "cli_pnl": parse_money(pnl),
-        })
+    for account in accounts:
+        response = client.account_information.get_all_account_positions(account_id=account["id"])
+        for position in response.body["results"]:
+            positions.append({
+                "ticker": position["instrument"]["symbol"],
+                "shares": float(position["units"]),
+                "cost_basis": float(position["cost_basis"]),
+            })
 
     return positions
 
@@ -97,10 +58,10 @@ def get_holding_data(ticker: str, shares: float, cost_basis: float) -> dict | No
 
 
 def build_portfolio() -> list[dict]:
-    """Pulls your REAL holdings from Robinhood via the SnapTrade CLI — no manual entry."""
+    """Pulls your REAL holdings from Robinhood via the SnapTrade SDK — no manual entry."""
     real_positions = get_snaptrade_positions()
     if not real_positions:
-        print("Couldn't retrieve positions from SnapTrade CLI.")
+        print("Couldn't retrieve positions from SnapTrade.")
         return []
 
     results = []
