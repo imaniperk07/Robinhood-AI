@@ -3,15 +3,19 @@ from datetime import datetime, timezone
 import yfinance as yf
 
 from athena import get_fundamentals
-from watchlist import format_market_cap
+from watchlist import format_market_cap, WATCHLIST
 from technical_analysis import (
     calculate_sma, calculate_rsi, calculate_macd, calculate_bollinger_bands,
     calculate_support_resistance, interpret_trend, interpret_rsi, interpret_macd,
 )
 from stock_ratings import score_trend, score_rsi, score_macd, score_bollinger, score_news
 from dashboard import INDICES, get_index_data, overall_sentiment
-from fact_checker import gather_facts, analyze_message
+from fact_checker import gather_facts, analyze_message, analyze_general_claim
+from news_analysis import get_market_wide_news
+from portfolio_assistant import build_portfolio
 from sources.base_source import SourceItem
+
+MARKET_TICKER = "MARKET"  # sentinel ticker for reports with no specific stock mentioned
 
 
 def get_technical_summary(ticker: str) -> dict:
@@ -108,6 +112,49 @@ def build_report(ticker: str, item: SourceItem) -> dict:
         "technical_summary": technical["summary"],
         "confidence_score": confidence_score,
         "reasoning": confidence_reasoning,
+    }
+
+
+def build_general_impact_report(item: SourceItem) -> dict:
+    """For content with no specific ticker mentioned (e.g. a general 'this affects a lot
+    of stocks' claim) — fact-checks the claim itself and flags which of the user's
+    watchlist + portfolio tickers it's likely to actually affect."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    try:
+        portfolio_tickers = [h["ticker"] for h in build_portfolio()]
+    except Exception:
+        portfolio_tickers = []
+    tickers_to_check = sorted(set(WATCHLIST) | set(portfolio_tickers))
+
+    try:
+        market_news = get_market_wide_news(max_articles=8)
+    except Exception:
+        market_news = []
+
+    analysis = analyze_general_claim(item.content, tickers_to_check, market_news, today)
+    impacted = analysis.get("impacted_tickers", [])
+
+    return {
+        "ticker": MARKET_TICKER,
+        "company": f"Potentially affects {len(impacted)} ticker(s)" if impacted else "No specific holdings affected",
+        "price": None,
+        "market_cap": None,
+        "daily_change_pct": None,
+        "source": item.source,
+        "source_claim": item.content,
+        "sentiment": analysis.get("sentiment", "Neutral"),
+        "sentiment_reasoning": analysis.get("sentiment_reasoning", ""),
+        "fact_check_verdict": analysis.get("fact_check_verdict", "Not Supported"),
+        "fact_check_explanation": analysis.get("fact_check_explanation", ""),
+        "recent_news": market_news[:5],
+        "technical_summary": analysis.get("impact_summary", ""),
+        "confidence_score": analysis.get("confidence_score", 1),
+        "reasoning": (
+            f"Impacted tickers from your watchlist/portfolio: {', '.join(impacted)}."
+            if impacted else
+            "No tickers from your watchlist or portfolio were identified as affected."
+        ),
     }
 
 

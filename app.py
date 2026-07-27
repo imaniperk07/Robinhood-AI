@@ -34,7 +34,7 @@ from wealth_builder import WEALTH_UNIVERSE, analyze_pick as wealth_analyze_pick,
 from database import storage
 from sources.base_source import build_manual_item
 from ticker_extractor import extract_tickers
-from report_generator import build_report
+from report_generator import build_report, build_general_impact_report, MARKET_TICKER
 # ---------------- Dark theme styling ----------------
 THEMES = {
     "Dark": {
@@ -1002,12 +1002,20 @@ def render_manual_entry_form():
 
             item = build_manual_item(manual_source, manual_author, manual_content, manual_url or None)
             tickers = extract_tickers(item.content)
+            item_id = storage.save_source_item(item)
 
             if not tickers:
-                st.warning("No tickers detected in this text. Try ALL CAPS or a $ prefix (e.g. $AAPL).")
+                with st.spinner("No specific ticker mentioned — fact-checking the claim and checking "
+                                 "impact on your watchlist/portfolio..."):
+                    try:
+                        report = build_general_impact_report(item)
+                        storage.save_analysis(item_id, report)
+                        st.success("Analyzed as a general market claim (no specific ticker mentioned).")
+                    except Exception as e:
+                        st.error(f"Failed to analyze: {e}")
+                st.rerun()
                 return
 
-            item_id = storage.save_source_item(item)
             with st.spinner(f"Analyzing {', '.join(tickers)}..."):
                 for ticker in tickers:
                     try:
@@ -1073,11 +1081,14 @@ def render_content_signals_tab():
         verdict_color = VERDICT_PILL_CLASS.get(a["fact_check_verdict"], "neutral")
         news = json.loads(a["news_json"]) if a["news_json"] else []
         news_html = "<br>".join(f"— {n.get('title', '')}" for n in news[:3]) or "No recent headlines."
+        is_market_wide = a["ticker"] == MARKET_TICKER
+        ticker_label = "GENERAL / MARKET-WIDE" if is_market_wide else a["ticker"]
+        summary_label = "Likely impact" if is_market_wide else "Technical"
 
         st.markdown(f"""
         <div class="card">
             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
-                <div class="card-value">{a['ticker']} <span class="pill pill-neutral" style="font-size:10px;">{a['item_source'].upper()}</span></div>
+                <div class="card-value">{ticker_label} <span class="pill pill-neutral" style="font-size:10px;">{a['item_source'].upper()}</span></div>
                 <div style="display:flex; gap:6px;">
                     <span class="pill pill-{verdict_color}">{a['fact_check_verdict']}</span>
                     <span class="pill pill-{conf_color}">{a['confidence_score']}/10</span>
@@ -1086,7 +1097,7 @@ def render_content_signals_tab():
             <div class="card-label" style="margin-top:10px;">"{a['item_content']}" &mdash; {a['item_author']}</div>
             <div class="card-label" style="margin-top:8px;"><b>Sentiment:</b> {a['sentiment']} — {a['sentiment_reasoning']}</div>
             <div class="card-label" style="margin-top:4px;"><b>Fact check:</b> {a['fact_check_explanation']}</div>
-            <div class="card-label" style="margin-top:4px;"><b>Technical:</b> {a['technical_summary']}</div>
+            <div class="card-label" style="margin-top:4px;"><b>{summary_label}:</b> {a['technical_summary']}</div>
             <div class="card-label" style="margin-top:8px;">{news_html}</div>
             <div class="banner" style="margin-top:10px; margin-bottom:0;">{a['reasoning']}</div>
         </div>
