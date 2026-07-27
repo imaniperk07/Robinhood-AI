@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from database import save_ai_usage
+from database import storage
 
 # Price per million tokens (input, output). Add a new entry here for any future
 # model/provider — everything else in this file and its callers stays the same.
@@ -25,7 +25,7 @@ def track_ai_usage(agent: str, model: str, input_tokens: int, output_tokens: int
     cost = estimate_cost(model, input_tokens, output_tokens)
 
     try:
-        save_ai_usage({
+        storage.save_ai_usage({
             "agent": agent,
             "feature": feature,
             "timestamp": datetime.now(timezone.utc).isoformat(),

@@ -12,7 +12,7 @@ from smart_alerts import check_ticker, WATCHLIST as ALERT_WATCHLIST
 from pullback_indicator import check_pullback_risk
 from watchlist import WATCHLIST, get_stock_data
 from news_analysis import get_market_wide_news, rough_tag, flag_watchlist_mentions
-from database import init_db, get_usage_today
+from database import storage
 
 load_dotenv()
 
@@ -155,8 +155,8 @@ def post_watchlist() -> bool:
 
 
 def build_ai_cost_report_message() -> str:
-    init_db()
-    usage = get_usage_today()
+    storage.init()
+    usage = storage.get_usage_today()
     today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
     lines = ["🤖 **AI System Report**", "", f"**Date:** {today_str}", ""]

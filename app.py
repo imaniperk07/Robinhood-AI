@@ -31,7 +31,7 @@ from opportunity_hunter import UNIVERSE as HUNTER_UNIVERSE, scan_theme as hunter
 from memory_agent import load_memory, update_profile, clear_notes, get_journal_insights
 from mentor import ask_mentor, get_categories as mentor_categories, get_terms as mentor_terms
 from wealth_builder import WEALTH_UNIVERSE, analyze_pick as wealth_analyze_pick, scan_universe as wealth_scan_universe
-from database import init_db, get_recent_items, get_recent_analyses, search_analyses, get_distinct_tickers, save_source_item, save_analysis, get_usage_today, get_usage_this_month, get_daily_usage_history
+from database import storage
 from sources.base_source import build_manual_item
 from ticker_extractor import extract_tickers
 from report_generator import build_report
@@ -1007,12 +1007,12 @@ def render_manual_entry_form():
                 st.warning("No tickers detected in this text. Try ALL CAPS or a $ prefix (e.g. $AAPL).")
                 return
 
-            item_id = save_source_item(item)
+            item_id = storage.save_source_item(item)
             with st.spinner(f"Analyzing {', '.join(tickers)}..."):
                 for ticker in tickers:
                     try:
                         report = build_report(ticker, item)
-                        save_analysis(item_id, report)
+                        storage.save_analysis(item_id, report)
                     except Exception as e:
                         st.error(f"Failed to analyze {ticker}: {e}")
 
@@ -1024,10 +1024,10 @@ def render_content_signals_tab():
     st.caption("Stock mentions detected across watched sources — fact-checked, technically analyzed, and "
                "scored for confidence. Not a recommendation — always do your own research.")
 
-    init_db()
+    storage.init()
     render_manual_entry_form()
 
-    recent_analyses = get_recent_analyses(limit=200)
+    recent_analyses = storage.get_recent_analyses(limit=200)
 
     if not recent_analyses:
         st.markdown(
@@ -1055,10 +1055,10 @@ def render_content_signals_tab():
 
     search_col, ticker_col, verdict_col = st.columns(3)
     query = search_col.text_input("Search", key="signals_search")
-    ticker_filter = ticker_col.selectbox("Ticker", ["All"] + get_distinct_tickers(), key="signals_ticker_filter")
+    ticker_filter = ticker_col.selectbox("Ticker", ["All"] + storage.get_distinct_tickers(), key="signals_ticker_filter")
     verdict_filter = verdict_col.selectbox("Fact-check verdict", ["All"] + list(VERDICT_PILL_CLASS.keys()), key="signals_verdict_filter")
 
-    results = search_analyses(
+    results = storage.search_analyses(
         query=query,
         ticker=None if ticker_filter == "All" else ticker_filter,
         verdict=None if verdict_filter == "All" else verdict_filter,
@@ -1094,7 +1094,7 @@ def render_content_signals_tab():
 
     st.markdown("#### Recent Source Items")
     st.caption("Every message seen, regardless of whether a ticker was detected — confirms the source is connected.")
-    for item in get_recent_items(limit=10):
+    for item in storage.get_recent_items(limit=10):
         st.markdown(f"""
         <div class="card">
             <div class="card-label">{item['source'].upper()} &mdash; {item['author']}</div>
@@ -1224,8 +1224,8 @@ def render_mentor_tab():
 def render_cost_tracker_tab():
     st.caption("AI usage and estimated spend across every Claude-powered feature in this app.")
 
-    init_db()
-    today_usage = get_usage_today()
+    storage.init()
+    today_usage = storage.get_usage_today()
 
     st.markdown("#### AI Usage Today")
     total_requests = sum(r["requests"] for r in today_usage)
@@ -1255,7 +1255,7 @@ def render_cost_tracker_tab():
         st.markdown('<div class="card-label">No AI usage recorded yet today.</div>', unsafe_allow_html=True)
 
     st.markdown("#### Monthly Summary")
-    month_usage = get_usage_this_month()
+    month_usage = storage.get_usage_this_month()
     if month_usage:
         total_requests_month = sum(r["requests"] for r in month_usage)
         total_cost_month = sum(r["cost"] for r in month_usage)
@@ -1278,7 +1278,7 @@ def render_cost_tracker_tab():
         st.markdown('<div class="card-label">No usage recorded yet this month.</div>', unsafe_allow_html=True)
 
     st.markdown("#### Daily History")
-    history = get_daily_usage_history(days=14)
+    history = storage.get_daily_usage_history(days=14)
     if history:
         for day in history:
             st.markdown(
