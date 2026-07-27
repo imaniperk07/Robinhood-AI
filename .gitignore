@@ -1,0 +1,24 @@
+# Secrets
+.env
+snaptrade_user.json
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Node (SnapTrade CLI, local-only)
+node_modules/
+
+# Runtime data — resets on Streamlit Cloud anyway
+*.db
+logs/
+user_memory.json
+trading_journal.json
+price_targets.json
+
+# OS
+.DS_Store
+
+# Claude Code local settings
+.claude/
