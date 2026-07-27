@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: dummy
+      NEWSAPI_KEY: dummy
+      SNAPTRADE_CLIENT_ID: dummy
+      SNAPTRADE_CONSUMER_KEY: dummy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile check (syntax errors)
+        run: python -m compileall -q .
+
+      - name: Import check
+        run: python .github/scripts/check_imports.py
