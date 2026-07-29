@@ -1,5 +1,6 @@
 import json
 import random
+from datetime import datetime, timezone
 
 import streamlit as st
 import yfinance as yf
@@ -286,7 +287,70 @@ def confidence_color(score: int) -> str:
         return "negative"
 
 
+def render_mission_control():
+    open_trades = storage.get_open_paper_trades()
+    closed_trades = storage.get_closed_paper_trades(limit=1000)
+
+    if not open_trades and not closed_trades:
+        st.markdown("""
+        <div class="banner" style="margin-bottom:16px;">
+            🛰️ <b>Mission Control</b> — No local trading-engine data synced yet. The paper-trading
+            engine runs locally (see Paper Trading page) and this deployment's database is separate
+            from a local machine's, so data only shows up here once the engine has run on this device.
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_closed = [t for t in closed_trades if t["date_closed"] and t["date_closed"].startswith(today_str)]
+    today_pl_usd = sum((t["position_size_usd"] or 0) * (t["profit_loss_pct"] or 0) / 100 for t in today_closed)
+
+    win_rate = (
+        sum(1 for t in closed_trades if (t["profit_loss_pct"] or 0) > 0) / len(closed_trades) * 100
+        if closed_trades else 0.0
+    )
+
+    latest_trade = max(
+        open_trades + closed_trades,
+        key=lambda t: t.get("date_closed") or t.get("date_opened") or "",
+        default=None,
+    )
+    highest_confidence = max(open_trades, key=lambda t: t["trade_score"] or 0, default=None)
+
+    last_activity_times = [t.get("date_closed") or t.get("date_opened") for t in open_trades + closed_trades]
+    last_activity = max(t for t in last_activity_times if t) if last_activity_times else None
+
+    st.markdown('<div class="card-label" style="margin-bottom:8px;">🛰️ MISSION CONTROL</div>', unsafe_allow_html=True)
+    mc_cols = st.columns(4)
+    mc_cols[0].markdown(f"""
+    <div class="card"><div class="card-label">OPEN PAPER TRADES</div><div class="card-value">{len(open_trades)}</div></div>
+    """, unsafe_allow_html=True)
+    mc_cols[1].markdown(f"""
+    <div class="card"><div class="card-label">TODAY'S PAPER P/L</div><div class="card-value" style="font-size:20px;">${today_pl_usd:,.2f}</div></div>
+    """, unsafe_allow_html=True)
+    mc_cols[2].markdown(f"""
+    <div class="card"><div class="card-label">WIN RATE</div><div class="card-value" style="font-size:20px;">{win_rate:.1f}%</div></div>
+    """, unsafe_allow_html=True)
+    mc_cols[3].markdown(f"""
+    <div class="card"><div class="card-label">LATEST TRADE</div><div class="card-value" style="font-size:16px;">{latest_trade['ticker'] if latest_trade else 'N/A'}</div></div>
+    """, unsafe_allow_html=True)
+
+    detail_cols = st.columns(2)
+    if highest_confidence:
+        detail_cols[0].markdown(f"""
+        <div class="card"><div class="card-label">HIGHEST CONFIDENCE OPEN</div><div class="card-value" style="font-size:16px;">{highest_confidence['ticker']} — {highest_confidence['trade_score']}/100</div></div>
+        """, unsafe_allow_html=True)
+    else:
+        detail_cols[0].markdown("""
+        <div class="card"><div class="card-label">HIGHEST CONFIDENCE OPEN</div><div class="card-value" style="font-size:16px;">No open positions</div></div>
+        """, unsafe_allow_html=True)
+    detail_cols[1].markdown(f"""
+    <div class="card"><div class="card-label">LAST ENGINE ACTIVITY</div><div class="card-value" style="font-size:16px;">{last_activity[:16].replace('T', ' ') if last_activity else 'N/A'} UTC</div></div>
+    """, unsafe_allow_html=True)
+
+
 def render_dashboard():
+    render_mission_control()
     st.markdown('<div class="hero-headline">Built for research.<br>Made for clarity.</div>', unsafe_allow_html=True)
 
     results = []
@@ -1367,6 +1431,172 @@ def render_ai_agents():
         render_cost_tracker_tab()
 
 
+STARTING_PAPER_BALANCE = 10000.0
+
+
+def render_open_positions_tab():
+    open_trades = storage.get_open_paper_trades()
+    if not open_trades:
+        st.markdown('<div class="card-label">No open paper trades right now.</div>', unsafe_allow_html=True)
+        return
+
+    for t in open_trades:
+        pl_class = pct_class(t["profit_loss_pct"] or 0)
+        st.markdown(f"""
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+                <div class="card-value">{t['ticker']}</div>
+                <div style="display:flex; gap:6px;">
+                    <span class="pill pill-{score_color(t['trade_score'] or 0)}">Score {t['trade_score']}/100</span>
+                    <span class="pill pill-{pl_class}">{(t['profit_loss_pct'] or 0):+.2f}%</span>
+                </div>
+            </div>
+            <div class="card-label" style="margin-top:10px;">
+                Entry ${t['entry_price']:.2f} &rarr; Current ${t['current_price']:.2f}
+                &nbsp;|&nbsp; Target ${t['target_price']:.2f} &nbsp;|&nbsp; Stop ${t['stop_loss']:.2f}
+            </div>
+            <div class="card-label" style="margin-top:4px;">
+                Risk: {t['risk_level']} &nbsp;|&nbsp; Days Held: {t['days_held']} &nbsp;|&nbsp;
+                Expected Hold: {t['expected_holding_time']}
+            </div>
+            <div class="banner" style="margin-top:10px; margin-bottom:0;">{t['reason_for_entry']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+def render_closed_positions_tab():
+    closed_trades = storage.get_closed_paper_trades()
+    if not closed_trades:
+        st.markdown('<div class="card-label">No closed paper trades yet.</div>', unsafe_allow_html=True)
+        return
+
+    for t in closed_trades:
+        pl_class = pct_class(t["profit_loss_pct"] or 0)
+        exit_icon = {"Target Hit": "🎯", "Stop Loss": "🛑", "Expired": "⏳", "AI Exit": "🤖"}.get(t["exit_reason"], "📉")
+        st.markdown(f"""
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+                <div class="card-value">{t['ticker']} <span class="pill pill-neutral" style="font-size:10px;">{exit_icon} {t['exit_reason']}</span></div>
+                <span class="pill pill-{pl_class}">{(t['profit_loss_pct'] or 0):+.2f}%</span>
+            </div>
+            <div class="card-label" style="margin-top:10px;">
+                Entry ${t['entry_price']:.2f} &rarr; Exit ${t['current_price']:.2f} &nbsp;|&nbsp; Days Held: {t['days_held']}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+def render_trade_journal_tab():
+    all_trades = storage.get_open_paper_trades() + storage.get_closed_paper_trades()
+    if not all_trades:
+        st.markdown('<div class="card-label">No trade journal entries yet.</div>', unsafe_allow_html=True)
+        return
+
+    for t in all_trades:
+        journal = storage.get_trade_journal(t["id"])
+        if not journal:
+            continue
+        with st.expander(f"{t['ticker']} — {t['status']}{' (' + t['exit_reason'] + ')' if t.get('exit_reason') else ''}"):
+            st.markdown(f"**Original Thesis:** {journal['original_thesis']}")
+            st.markdown(f"**News Summary:** {journal['news_summary']}")
+            st.markdown(f"**Technical Analysis:** {journal['technical_analysis']}")
+            st.markdown(f"**Confidence Score:** {journal['confidence_score']}/100")
+            st.markdown(f"**Reason Entry Approved:** {journal['reason_entry_approved']}")
+            if journal.get("reason_exit_occurred"):
+                st.markdown(f"**Reason Exit Occurred:** {journal['reason_exit_occurred']}")
+            if journal.get("lessons_learned"):
+                st.markdown(f"**Lessons Learned:** {journal['lessons_learned']}")
+            if journal.get("final_outcome"):
+                st.markdown(f"**Final Outcome:** {journal['final_outcome']}")
+
+
+def render_paper_trading_performance_tab():
+    open_trades = storage.get_open_paper_trades()
+    closed_trades = storage.get_closed_paper_trades(limit=1000)
+
+    realized_pl_usd = sum((t["position_size_usd"] or 0) * (t["profit_loss_pct"] or 0) / 100 for t in closed_trades)
+    unrealized_pl_usd = sum((t["position_size_usd"] or 0) * (t["profit_loss_pct"] or 0) / 100 for t in open_trades)
+    portfolio_value = STARTING_PAPER_BALANCE + realized_pl_usd + unrealized_pl_usd
+
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_closed = [t for t in closed_trades if t["date_closed"] and t["date_closed"].startswith(today_str)]
+    today_pl_usd = sum((t["position_size_usd"] or 0) * (t["profit_loss_pct"] or 0) / 100 for t in today_closed)
+
+    stat_cols = st.columns(3)
+    stat_cols[0].markdown(f"""
+    <div class="card"><div class="card-label">PAPER PORTFOLIO VALUE</div><div class="card-value">${portfolio_value:,.2f}</div></div>
+    """, unsafe_allow_html=True)
+    stat_cols[1].markdown(f"""
+    <div class="card"><div class="card-label">TODAY'S P/L</div><div class="card-value">${today_pl_usd:,.2f}</div></div>
+    """, unsafe_allow_html=True)
+    stat_cols[2].markdown(f"""
+    <div class="card"><div class="card-label">OPEN POSITIONS</div><div class="card-value">{len(open_trades)}</div></div>
+    """, unsafe_allow_html=True)
+
+    if not closed_trades:
+        st.markdown('<div class="card-label" style="margin-top:16px;">No closed trades yet — performance stats need at least one completed trade.</div>', unsafe_allow_html=True)
+        return
+
+    wins = [t for t in closed_trades if (t["profit_loss_pct"] or 0) > 0]
+    losses = [t for t in closed_trades if (t["profit_loss_pct"] or 0) <= 0]
+    win_rate = len(wins) / len(closed_trades) * 100
+    avg_gain = sum(t["profit_loss_pct"] for t in wins) / len(wins) if wins else 0.0
+    avg_loss = sum(t["profit_loss_pct"] for t in losses) / len(losses) if losses else 0.0
+    avg_holding = sum(t["days_held"] or 0 for t in closed_trades) / len(closed_trades)
+
+    best_trade = max(closed_trades, key=lambda t: t["profit_loss_pct"] or 0)
+    worst_trade = min(closed_trades, key=lambda t: t["profit_loss_pct"] or 0)
+    largest_winner = max(closed_trades, key=lambda t: (t["position_size_usd"] or 0) * (t["profit_loss_pct"] or 0))
+    largest_loser = min(closed_trades, key=lambda t: (t["position_size_usd"] or 0) * (t["profit_loss_pct"] or 0))
+
+    st.markdown("#### Strategy Performance")
+    perf_cols = st.columns(3)
+    perf_cols[0].markdown(f"""
+    <div class="card"><div class="card-label">WIN RATE</div><div class="card-value" style="font-size:20px;">{win_rate:.1f}%</div></div>
+    """, unsafe_allow_html=True)
+    perf_cols[1].markdown(f"""
+    <div class="card"><div class="card-label">AVG GAIN / AVG LOSS</div><div class="card-value" style="font-size:16px;">{avg_gain:+.2f}% / {avg_loss:+.2f}%</div></div>
+    """, unsafe_allow_html=True)
+    perf_cols[2].markdown(f"""
+    <div class="card"><div class="card-label">AVG HOLDING TIME</div><div class="card-value" style="font-size:16px;">{avg_holding:.1f} days</div></div>
+    """, unsafe_allow_html=True)
+
+    extremes_cols = st.columns(2)
+    extremes_cols[0].markdown(f"""
+    <div class="card">
+        <div class="card-label">BEST TRADE</div>
+        <div class="card-value" style="font-size:16px;">{best_trade['ticker']} {(best_trade['profit_loss_pct'] or 0):+.2f}%</div>
+        <div class="card-label" style="margin-top:10px;">LARGEST WINNER ($)</div>
+        <div class="card-value" style="font-size:16px;">{largest_winner['ticker']} ${(largest_winner['position_size_usd'] or 0) * (largest_winner['profit_loss_pct'] or 0) / 100:+,.2f}</div>
+    </div>
+    """, unsafe_allow_html=True)
+    extremes_cols[1].markdown(f"""
+    <div class="card">
+        <div class="card-label">WORST TRADE</div>
+        <div class="card-value" style="font-size:16px;">{worst_trade['ticker']} {(worst_trade['profit_loss_pct'] or 0):+.2f}%</div>
+        <div class="card-label" style="margin-top:10px;">LARGEST LOSER ($)</div>
+        <div class="card-value" style="font-size:16px;">{largest_loser['ticker']} ${(largest_loser['position_size_usd'] or 0) * (largest_loser['profit_loss_pct'] or 0) / 100:+,.2f}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_paper_trading():
+    st.markdown('<div class="hero-headline">Paper Trading.</div>', unsafe_allow_html=True)
+    st.caption("100% simulated — no real brokerage, no real money. Validates trade decision-making before any live execution is ever considered.")
+
+    tab_open, tab_closed, tab_journal, tab_performance = st.tabs(
+        ["Open Positions", "Closed Positions", "Journal", "Performance"]
+    )
+    with tab_open:
+        render_open_positions_tab()
+    with tab_closed:
+        render_closed_positions_tab()
+    with tab_journal:
+        render_trade_journal_tab()
+    with tab_performance:
+        render_paper_trading_performance_tab()
+
+
 # ---------------- Sidebar navigation ----------------
 st.sidebar.markdown("""
 <div class="brand-header">
@@ -1377,7 +1607,7 @@ st.sidebar.markdown("""
 page = st.sidebar.radio(
     "Navigate",
     ["Market Dashboard", "Watchlist", "Technical Analysis", "News", "Stock Ratings",
-     "Portfolio", "Pullback Indicator", "Smart Alerts", "Daily Briefing", "AI Agents"],
+     "Portfolio", "Pullback Indicator", "Smart Alerts", "Daily Briefing", "Paper Trading", "AI Agents"],
     label_visibility="collapsed",
 )
 
@@ -1399,5 +1629,7 @@ elif page == "Smart Alerts":
     render_smart_alerts()
 elif page == "Daily Briefing":
     render_daily_briefing()
+elif page == "Paper Trading":
+    render_paper_trading()
 elif page == "AI Agents":
     render_ai_agents()
