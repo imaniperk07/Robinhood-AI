@@ -203,6 +203,95 @@ def post_ai_cost_report() -> bool:
     return send_to_discord("system_status", build_ai_cost_report_message(), username="System")
 
 
+def build_trade_opened_message(trade: dict) -> str:
+    lines = [
+        f"📈 **Paper Trade Opened: {trade['ticker']}**", "",
+        f"**Entry:** ${trade['entry_price']:.2f}",
+        f"**Target:** ${trade['target_price']:.2f}   **Stop:** ${trade['stop_loss']:.2f}",
+        f"**Position Size:** ${trade['position_size_usd']:.2f} ({trade['shares']:.4f} shares)",
+        f"**Trade Score:** {trade['trade_score']}/100   **Athena Confidence:** {trade['athena_confidence']}/100",
+        f"**Risk Level:** {trade['risk_level']}",
+        f"**Expected Holding Time:** {trade['expected_holding_time']}",
+        "", f"**Reasoning:** {trade['reason_for_entry']}",
+    ]
+    return "\n".join(lines)
+
+
+def post_trade_opened(trade: dict) -> bool:
+    return send_to_discord("alerts", build_trade_opened_message(trade), username="Trading Engine")
+
+
+def build_trade_closed_message(trade: dict) -> str:
+    icon = {"Target Hit": "🎯", "Stop Loss": "🛑", "Expired": "⏳", "AI Exit": "🤖"}.get(trade["exit_reason"], "📉")
+    result = "WIN" if trade["profit_loss_pct"] > 0 else "LOSS"
+    lines = [
+        f"{icon} **Paper Trade Closed: {trade['ticker']} — {trade['exit_reason']}**", "",
+        f"**Result:** {result} ({trade['profit_loss_pct']:+.2f}%)",
+        f"**Entry:** ${trade['entry_price']:.2f}   **Exit:** ${trade['current_price']:.2f}",
+        f"**Days Held:** {trade.get('days_held', 'N/A')}",
+    ]
+    return "\n".join(lines)
+
+
+def post_trade_closed(trade: dict) -> bool:
+    return send_to_discord("alerts", build_trade_closed_message(trade), username="Trading Engine")
+
+
+def build_paper_trading_daily_summary_message() -> str:
+    open_trades = storage.get_open_paper_trades()
+    closed_today = [
+        t for t in storage.get_closed_paper_trades(limit=200)
+        if t["date_closed"] and t["date_closed"].startswith(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    ]
+
+    lines = ["📊 **Paper Trading Daily Summary**", "", f"**Open Positions:** {len(open_trades)}"]
+    if closed_today:
+        wins = sum(1 for t in closed_today if t["profit_loss_pct"] > 0)
+        total_pl = sum(t["profit_loss_pct"] for t in closed_today)
+        lines.append(f"**Closed Today:** {len(closed_today)} ({wins} win / {len(closed_today) - wins} loss)")
+        lines.append(f"**Today's Total P/L:** {total_pl:+.2f}%")
+    else:
+        lines.append("**Closed Today:** none")
+    return "\n".join(lines)
+
+
+def post_paper_trading_daily_summary() -> bool:
+    return send_to_discord("alerts", build_paper_trading_daily_summary_message(), username="Trading Engine")
+
+
+def build_paper_trading_weekly_summary_message() -> str:
+    closed = storage.get_closed_paper_trades(limit=200)
+    week_ago = datetime.now(timezone.utc).timestamp() - 7 * 86400
+    closed_this_week = [
+        t for t in closed
+        if t["date_closed"] and datetime.fromisoformat(t["date_closed"]).timestamp() >= week_ago
+    ]
+
+    lines = ["📅 **Paper Trading Weekly Performance**", ""]
+    if not closed_this_week:
+        lines.append("No trades closed this week.")
+        return "\n".join(lines)
+
+    wins = [t for t in closed_this_week if t["profit_loss_pct"] > 0]
+    win_rate = len(wins) / len(closed_this_week) * 100
+    avg_gain = sum(t["profit_loss_pct"] for t in wins) / len(wins) if wins else 0.0
+    losses = [t for t in closed_this_week if t["profit_loss_pct"] <= 0]
+    avg_loss = sum(t["profit_loss_pct"] for t in losses) / len(losses) if losses else 0.0
+    best = max(closed_this_week, key=lambda t: t["profit_loss_pct"])
+    worst = min(closed_this_week, key=lambda t: t["profit_loss_pct"])
+
+    lines.append(f"**Trades Closed:** {len(closed_this_week)}")
+    lines.append(f"**Win Rate:** {win_rate:.1f}%")
+    lines.append(f"**Avg Gain:** {avg_gain:+.2f}%   **Avg Loss:** {avg_loss:+.2f}%")
+    lines.append(f"**Best Trade:** {best['ticker']} ({best['profit_loss_pct']:+.2f}%)")
+    lines.append(f"**Worst Trade:** {worst['ticker']} ({worst['profit_loss_pct']:+.2f}%)")
+    return "\n".join(lines)
+
+
+def post_paper_trading_weekly_summary() -> bool:
+    return send_to_discord("alerts", build_paper_trading_weekly_summary_message(), username="Trading Engine")
+
+
 def post_system_status(success: bool, detail: str = "") -> bool:
     icon = "✅" if success else "❌"
     status = "completed successfully" if success else "failed"
@@ -239,6 +328,11 @@ def run_daily_discord_updates() -> None:
         post_ai_cost_report()
     except Exception as e:
         errors.append(f"AI cost report failed: {e}")
+
+    try:
+        post_paper_trading_daily_summary()
+    except Exception as e:
+        errors.append(f"Paper trading summary failed: {e}")
 
     if errors:
         post_system_status(success=False, detail="\n".join(errors))
