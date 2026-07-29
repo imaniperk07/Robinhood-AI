@@ -1,4 +1,5 @@
 import json
+import random
 
 import streamlit as st
 import yfinance as yf
@@ -15,8 +16,9 @@ from stock_ratings import (
     score_trend, score_rsi, score_macd, score_bollinger, score_news,
 )
 from portfolio_assistant import (
-    build_portfolio, calculate_risk_score,
+    build_portfolio, calculate_risk_score, get_snaptrade_positions,
 )
+from stock_chart import build_candlestick_chart
 from pullback_indicator import check_pullback_risk
 st.set_page_config(page_title="Robinhood AI", page_icon="📈", layout="wide")
 theme = st.sidebar.radio("Theme", ["Dark", "Light"], horizontal=True)
@@ -343,6 +345,28 @@ def render_dashboard():
         </div>
         """, unsafe_allow_html=True)
 
+    if "dashboard_spotlight_ticker" not in st.session_state:
+        try:
+            holdings = get_snaptrade_positions()
+        except Exception:
+            holdings = []
+        tickers = [h["ticker"] for h in holdings] or WATCHLIST
+        st.session_state.dashboard_spotlight_ticker = random.choice(tickers)
+
+    spotlight_ticker = st.session_state.dashboard_spotlight_ticker
+
+    @st.fragment(run_every="60s")
+    def render_spotlight():
+        st.markdown('<div class="card-label" style="margin-top:24px;">FEATURED HOLDING</div>', unsafe_allow_html=True)
+        spotlight_history = yf.Ticker(spotlight_ticker).history(period="5d", interval="15m")
+        if spotlight_history.empty:
+            st.warning(f"Couldn't load chart data for {spotlight_ticker}.")
+            return
+        fig = build_candlestick_chart(spotlight_ticker, spotlight_history, t, theme, show_bollinger=False)
+        st.plotly_chart(fig, width="stretch", key=f"dashboard_chart_{spotlight_ticker}")
+
+    render_spotlight()
+
 
 def render_watchlist():
     st.markdown('<div class="hero-headline">Your Watchlist.</div>', unsafe_allow_html=True)
@@ -382,63 +406,70 @@ def render_technical_analysis():
 
     ticker = st.selectbox("Choose a stock", WATCHLIST)
 
-    with st.spinner(f"Analyzing {ticker}..."):
-        stock = yf.Ticker(ticker)
-        history = stock.history(period="6mo")
+    @st.fragment(run_every="60s")
+    def render_technical_analysis_content(ticker: str):
+        with st.spinner(f"Analyzing {ticker}..."):
+            stock = yf.Ticker(ticker)
+            history = stock.history(period="6mo")
 
-        if history.empty or len(history) < 50:
-            st.warning(f"Not enough data to analyze {ticker}.")
-            return
+            if history.empty or len(history) < 50:
+                st.warning(f"Not enough data to analyze {ticker}.")
+                return
 
-        closes = history["Close"]
-        latest_price = closes.iloc[-1]
-        sma_20 = calculate_sma(closes, 20).iloc[-1]
-        sma_50 = calculate_sma(closes, 50).iloc[-1]
-        rsi = calculate_rsi(closes).iloc[-1]
-        macd_line, signal_line = calculate_macd(closes)
-        upper_band, mid_band, lower_band = calculate_bollinger_bands(closes)
-        support, resistance = calculate_support_resistance(history)
+            closes = history["Close"]
+            latest_price = closes.iloc[-1]
+            sma_20 = calculate_sma(closes, 20).iloc[-1]
+            sma_50 = calculate_sma(closes, 50).iloc[-1]
+            rsi = calculate_rsi(closes).iloc[-1]
+            macd_line, signal_line = calculate_macd(closes)
+            upper_band, mid_band, lower_band = calculate_bollinger_bands(closes)
+            support, resistance = calculate_support_resistance(history)
 
-    if latest_price > sma_20 > sma_50:
-        trend_class, trend_label = "positive", "UPTREND"
-    elif latest_price < sma_20 < sma_50:
-        trend_class, trend_label = "negative", "DOWNTREND"
-    else:
-        trend_class, trend_label = "neutral", "MIXED"
+        if latest_price > sma_20 > sma_50:
+            trend_class, trend_label = "positive", "UPTREND"
+        elif latest_price < sma_20 < sma_50:
+            trend_class, trend_label = "negative", "DOWNTREND"
+        else:
+            trend_class, trend_label = "neutral", "MIXED"
 
-    hero_col, stat_col = st.columns([2, 1])
-    with hero_col:
-        st.markdown(f"""
-        <div class="card" style="padding-top:34px;">
-            <span class="card-expand">⤢</span>
-            <div class="card-label">{ticker} &mdash; CURRENT PRICE</div>
-            <div style="font-size:40px; font-weight:800; font-family:'IBM Plex Mono', monospace; margin:6px 0 10px 0;">
-                ${latest_price:.2f}
+        hero_col, stat_col = st.columns([2, 1])
+        with hero_col:
+            st.markdown(f"""
+            <div class="card" style="padding-top:34px;">
+                <span class="card-expand">⤢</span>
+                <div class="card-label">{ticker} &mdash; CURRENT PRICE</div>
+                <div style="font-size:40px; font-weight:800; font-family:'IBM Plex Mono', monospace; margin:6px 0 10px 0;">
+                    ${latest_price:.2f}
+                </div>
+                <span class="pill pill-{trend_class}">{trend_label}</span>
             </div>
-            <span class="pill pill-{trend_class}">{trend_label}</span>
-        </div>
-        """, unsafe_allow_html=True)
-    with stat_col:
-        st.markdown(f"""
-        <div class="card" style="padding-top:34px;">
-            <div class="card-label">SMA 20 / SMA 50</div>
-            <div class="card-value" style="font-size:16px;">${sma_20:.2f} / ${sma_50:.2f}</div>
-            <div class="card-label" style="margin-top:14px;">SUPPORT / RESISTANCE</div>
-            <div class="card-value" style="font-size:16px;">${support:.2f} / ${resistance:.2f}</div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+        with stat_col:
+            st.markdown(f"""
+            <div class="card" style="padding-top:34px;">
+                <div class="card-label">SMA 20 / SMA 50</div>
+                <div class="card-value" style="font-size:16px;">${sma_20:.2f} / ${sma_50:.2f}</div>
+                <div class="card-label" style="margin-top:14px;">SUPPORT / RESISTANCE</div>
+                <div class="card-value" style="font-size:16px;">${support:.2f} / ${resistance:.2f}</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-    explanations = [
-        interpret_trend(latest_price, sma_20, sma_50),
-        interpret_rsi(rsi),
-        interpret_macd(macd_line.iloc[-1], signal_line.iloc[-1]),
-        interpret_bollinger(latest_price, upper_band.iloc[-1], lower_band.iloc[-1]),
-    ]
+        fig = build_candlestick_chart(ticker, history, t, theme, show_bollinger=True)
+        st.plotly_chart(fig, width="stretch", key=f"tech_chart_{ticker}")
 
-    for explanation in explanations:
-        st.markdown(f"""
-        <div class="banner">{explanation}</div>
-        """, unsafe_allow_html=True)
+        explanations = [
+            interpret_trend(latest_price, sma_20, sma_50),
+            interpret_rsi(rsi),
+            interpret_macd(macd_line.iloc[-1], signal_line.iloc[-1]),
+            interpret_bollinger(latest_price, upper_band.iloc[-1], lower_band.iloc[-1]),
+        ]
+
+        for explanation in explanations:
+            st.markdown(f"""
+            <div class="banner">{explanation}</div>
+            """, unsafe_allow_html=True)
+
+    render_technical_analysis_content(ticker)
 
 
 def render_news():
