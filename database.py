@@ -49,6 +49,42 @@ CREATE TABLE IF NOT EXISTS ai_usage (
     total_tokens INTEGER,
     estimated_cost REAL
 );
+CREATE TABLE IF NOT EXISTS paper_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT,
+    entry_price REAL,
+    target_price REAL,
+    stop_loss REAL,
+    position_size_usd REAL,
+    shares REAL,
+    trade_score INTEGER,
+    athena_confidence INTEGER,
+    risk_level TEXT,
+    reason_for_entry TEXT,
+    expected_holding_time TEXT,
+    date_opened TEXT,
+    date_closed TEXT,
+    status TEXT,
+    exit_reason TEXT,
+    current_price REAL,
+    profit_loss_pct REAL,
+    highest_gain_pct REAL,
+    largest_drawdown_pct REAL,
+    days_held INTEGER
+);
+CREATE TABLE IF NOT EXISTS trade_journal (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_id INTEGER REFERENCES paper_trades(id),
+    original_thesis TEXT,
+    news_summary TEXT,
+    technical_analysis TEXT,
+    confidence_score INTEGER,
+    reason_entry_approved TEXT,
+    reason_exit_occurred TEXT,
+    lessons_learned TEXT,
+    final_outcome TEXT,
+    created_at TEXT
+);
 """
 
 
@@ -100,6 +136,30 @@ class Storage(ABC):
 
     @abstractmethod
     def get_daily_usage_history(self, days: int = 14) -> list[dict]: ...
+
+    @abstractmethod
+    def save_paper_trade(self, trade: dict) -> int: ...
+
+    @abstractmethod
+    def update_paper_trade(self, trade_id: int, fields: dict) -> None: ...
+
+    @abstractmethod
+    def get_open_paper_trades(self) -> list[dict]: ...
+
+    @abstractmethod
+    def get_closed_paper_trades(self, limit: int = 100) -> list[dict]: ...
+
+    @abstractmethod
+    def get_paper_trade(self, trade_id: int) -> dict | None: ...
+
+    @abstractmethod
+    def save_trade_journal_entry(self, entry: dict) -> int: ...
+
+    @abstractmethod
+    def update_trade_journal_entry(self, trade_id: int, fields: dict) -> None: ...
+
+    @abstractmethod
+    def get_trade_journal(self, trade_id: int) -> dict | None: ...
 
 
 class SQLiteStorage(Storage):
@@ -284,6 +344,95 @@ class SQLiteStorage(Storage):
                 (days,),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def save_paper_trade(self, trade: dict) -> int:
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO paper_trades (
+                    ticker, entry_price, target_price, stop_loss, position_size_usd, shares,
+                    trade_score, athena_confidence, risk_level, reason_for_entry, expected_holding_time,
+                    date_opened, date_closed, status, exit_reason, current_price, profit_loss_pct,
+                    highest_gain_pct, largest_drawdown_pct, days_held
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    trade["ticker"], trade["entry_price"], trade.get("target_price"), trade.get("stop_loss"),
+                    trade.get("position_size_usd"), trade.get("shares"), trade.get("trade_score"),
+                    trade.get("athena_confidence"), trade.get("risk_level"), trade.get("reason_for_entry"),
+                    trade.get("expected_holding_time"), trade.get("date_opened"), trade.get("date_closed"),
+                    trade.get("status", "Open"), trade.get("exit_reason"), trade.get("current_price"),
+                    trade.get("profit_loss_pct"), trade.get("highest_gain_pct"), trade.get("largest_drawdown_pct"),
+                    trade.get("days_held"),
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def update_paper_trade(self, trade_id: int, fields: dict) -> None:
+        if not fields:
+            return
+        set_clause = ", ".join(f"{key} = ?" for key in fields)
+        with self._get_connection() as conn:
+            conn.execute(
+                f"UPDATE paper_trades SET {set_clause} WHERE id = ?",
+                (*fields.values(), trade_id),
+            )
+            conn.commit()
+
+    def get_open_paper_trades(self) -> list[dict]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM paper_trades WHERE status = 'Open' ORDER BY date_opened DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_closed_paper_trades(self, limit: int = 100) -> list[dict]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM paper_trades WHERE status = 'Closed' ORDER BY date_closed DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_paper_trade(self, trade_id: int) -> dict | None:
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM paper_trades WHERE id = ?", (trade_id,)).fetchone()
+            return dict(row) if row else None
+
+    def save_trade_journal_entry(self, entry: dict) -> int:
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO trade_journal (
+                    trade_id, original_thesis, news_summary, technical_analysis, confidence_score,
+                    reason_entry_approved, reason_exit_occurred, lessons_learned, final_outcome, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    entry["trade_id"], entry.get("original_thesis"), entry.get("news_summary"),
+                    entry.get("technical_analysis"), entry.get("confidence_score"),
+                    entry.get("reason_entry_approved"), entry.get("reason_exit_occurred"),
+                    entry.get("lessons_learned"), entry.get("final_outcome"),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def update_trade_journal_entry(self, trade_id: int, fields: dict) -> None:
+        if not fields:
+            return
+        set_clause = ", ".join(f"{key} = ?" for key in fields)
+        with self._get_connection() as conn:
+            conn.execute(
+                f"UPDATE trade_journal SET {set_clause} WHERE trade_id = ?",
+                (*fields.values(), trade_id),
+            )
+            conn.commit()
+
+    def get_trade_journal(self, trade_id: int) -> dict | None:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM trade_journal WHERE trade_id = ? ORDER BY id DESC LIMIT 1", (trade_id,)
+            ).fetchone()
+            return dict(row) if row else None
 
 
 storage: Storage = SQLiteStorage()
