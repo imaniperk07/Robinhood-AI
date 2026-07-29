@@ -8,7 +8,7 @@ from jarvis import client, MODEL
 from ai_cost_tracker import track_ai_usage
 
 
-def _strip_json_fence(text: str) -> str:
+def strip_json_fence(text: str) -> str:
     """Claude sometimes wraps JSON responses in a ```json ... ``` code fence despite
     being asked for raw JSON — strip it before parsing."""
     text = text.strip()
@@ -90,7 +90,7 @@ company. Respond with ONLY valid JSON in exactly this shape, no other text:
             feature="fact_check",
         )
         text = "".join(block.text for block in response.content if block.type == "text")
-        return json.loads(_strip_json_fence(text))
+        return json.loads(strip_json_fence(text))
     except Exception as e:
         return {
             "sentiment": "Neutral",
@@ -141,7 +141,7 @@ valid JSON in exactly this shape, no other text:
             feature="fact_check",
         )
         text = "".join(block.text for block in response.content if block.type == "text")
-        return json.loads(_strip_json_fence(text))
+        return json.loads(strip_json_fence(text))
     except Exception as e:
         return {
             "sentiment": "Neutral",
