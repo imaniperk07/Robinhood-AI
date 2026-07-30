@@ -6,7 +6,8 @@ from report_generator import get_technical_summary
 from tradingview_ratings import get_rating as get_tradingview_rating
 from pullback_indicator import check_pullback_risk
 from smart_alerts import check_ticker as check_smart_alerts
-from fact_checker import gather_facts, strip_json_fence
+from fact_checker import get_earnings_date, strip_json_fence
+from news_analysis import get_news
 from dashboard import INDICES, get_index_data, overall_sentiment
 from jarvis import client, MODEL
 from ai_cost_tracker import track_ai_usage
@@ -57,13 +58,17 @@ def evaluate_trade(ticker: str, signals: dict, market_sentiment: str, portfolio_
     if ticker in portfolio_tickers:
         return None
 
-    facts = gather_facts(ticker)
+    earnings_date = get_earnings_date(ticker)
+    try:
+        recent_news = get_news(ticker, max_articles=5)
+    except Exception:
+        recent_news = []
     athena = signals["athena"]
     technical = signals["technical"]
     tv_rating = signals.get("tradingview_rating")
     pullback = signals.get("pullback_risk")
     alerts = signals.get("smart_alerts") or []
-    headlines = [a.get("title", "") for a in facts.get("recent_news", [])]
+    headlines = [a.get("title", "") for a in recent_news]
 
     prompt = f"""Today's date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}
 Evaluate {ticker} as a candidate SWING TRADE (holding period of days to a few weeks) using
@@ -82,7 +87,7 @@ Pullback/overextension risk: {pullback['risk_level'] if pullback else 'unavailab
 Smart alerts triggered: {alerts or 'none'}
 
 Recent news headlines: {headlines or 'none found'}
-Next/most recent earnings date: {facts.get('earnings_date') or 'unknown'}
+Next/most recent earnings date: {earnings_date or 'unknown'}
 
 Overall market sentiment today: {market_sentiment}
 
