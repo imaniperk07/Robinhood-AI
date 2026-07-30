@@ -288,6 +288,7 @@ def confidence_color(score: int) -> str:
 
 
 def render_mission_control():
+    storage.init()
     open_trades = storage.get_open_paper_trades()
     closed_trades = storage.get_closed_paper_trades(limit=1000)
 
@@ -1581,6 +1582,7 @@ def render_paper_trading_performance_tab():
 
 
 def render_paper_trading():
+    storage.init()
     st.markdown('<div class="hero-headline">Paper Trading.</div>', unsafe_allow_html=True)
     st.caption("100% simulated — no real brokerage, no real money. Validates trade decision-making before any live execution is ever considered.")
 
