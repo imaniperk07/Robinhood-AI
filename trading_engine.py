@@ -19,6 +19,8 @@ MONITOR_INTERVAL_SECONDS = 5 * 60    # fast loop: pure price checks on open trad
 SCAN_INTERVAL_SECONDS = 60 * 60      # slow loop: evaluate new candidates + thesis decay
 MAX_HOLDING_DAYS = 20                # hard expiry cap for a swing trade
 THESIS_DECAY_ATHENA_FLOOR = 40       # if Athena confidence drops below this, thesis is suspect
+MAX_CANDIDATES_PER_SCAN = 10         # hard cap on NewsAPI+Claude spend per cycle, regardless
+                                      # of how many clear the (deliberately loose) pre-filter
 
 
 def get_candidate_tickers() -> list[str]:
@@ -63,11 +65,20 @@ async def scan_for_new_trades() -> None:
             continue
         signals = gather_signals(ticker)
         if passes_prefilter(signals):
-            shortlist.append((ticker, signals))
+            strength = signals["athena"]["confidence_score"] + signals["technical"]["score_100"]
+            shortlist.append((strength, ticker, signals))
 
     print(f"  {len(shortlist)} candidate(s) passed the pre-filter.")
 
-    for ticker, signals in shortlist:
+    # Cap NewsAPI+Claude spend per cycle regardless of how many clear the pre-filter —
+    # take only the strongest few, ranked by combined Athena + technical score, so a
+    # loose day for the market can't blow the free-tier news quota in one cycle.
+    shortlist.sort(key=lambda row: row[0], reverse=True)
+    shortlist = shortlist[:MAX_CANDIDATES_PER_SCAN]
+    if shortlist:
+        print(f"  Evaluating the top {len(shortlist)}: {', '.join(t for _, t, _ in shortlist)}")
+
+    for _strength, ticker, signals in shortlist:
         decision = evaluate_trade(ticker, signals, market_sentiment, portfolio_tickers)
         if not decision or decision["probability_score"] < CONFIDENCE_THRESHOLD:
             continue
