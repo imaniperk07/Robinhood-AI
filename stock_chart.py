@@ -3,14 +3,19 @@ import plotly.graph_objects as go
 
 from technical_analysis import calculate_sma, calculate_bollinger_bands
 
-# Blue/orange — the dataviz palette's default categorical slots 1-2, validated with the
+# Teal/orange candlestick colors, fixed across both themes (not theme-tied like the
+# app's positive/negative pills) — a deliberate, distinctive chart identity requested
+# to match a specific reference image, independent of Dark/Light mode.
+CANDLE_COLORS = {"up": "#14B8A6", "down": "#F59E0B"}
+
+# Blue/green SMA overlay lines — orange is now taken by down-candles, so this swaps out
+# the old blue/orange pairing (which would clash) for blue/green, re-validated with the
 # palette validator against both app surfaces (light #fcfcfb / dark #1a1a19, close to the
-# app's actual #FFFFFF / #17171C card_bg): CVD ΔE 24.7 light / 26.8 dark, normal-vision ΔE
-# 33.6 / 31.8, both ≥3:1 contrast. Candle up/down colors reuse the app's own THEMES
-# positive/negative instead of adding a third pair here.
+# app's actual #FFFFFF / #17171C card_bg): CVD ΔE 26.5 light / 27.3 dark, normal-vision ΔE
+# 29.0 / 29.9, both ≥3:1 contrast.
 OVERLAY_COLORS = {
-    "Light": {"sma_fast": "#2a78d6", "sma_slow": "#eb6834"},
-    "Dark": {"sma_fast": "#3987e5", "sma_slow": "#d95926"},
+    "Light": {"sma_fast": "#2a78d6", "sma_slow": "#008300"},
+    "Dark": {"sma_fast": "#3987e5", "sma_slow": "#008300"},
 }
 
 
@@ -37,8 +42,8 @@ def build_candlestick_chart(
     fig = go.Figure(data=[go.Candlestick(
         x=history.index, open=history["Open"], high=history["High"],
         low=history["Low"], close=history["Close"], name=ticker,
-        increasing_line_color=theme["positive"], decreasing_line_color=theme["negative"],
-        increasing_fillcolor=theme["positive"], decreasing_fillcolor=theme["negative"],
+        increasing_line_color=CANDLE_COLORS["up"], decreasing_line_color=CANDLE_COLORS["down"],
+        increasing_fillcolor=CANDLE_COLORS["up"], decreasing_fillcolor=CANDLE_COLORS["down"],
     )])
 
     fast, slow = sma_windows
@@ -111,7 +116,7 @@ def add_trade_markers(
         marker=dict(symbol="triangle-up", size=14, color=theme["text"], line=dict(width=1, color=theme["card_bg"])),
     ))
     if exit_date is not None and exit_price is not None:
-        exit_color = theme["positive"] if is_win else theme["negative"]
+        exit_color = CANDLE_COLORS["up"] if is_win else CANDLE_COLORS["down"]
         fig.add_trace(go.Scatter(
             x=[_nearest(exit_date)], y=[exit_price], mode="markers", name="Exit",
             marker=dict(symbol="triangle-down", size=14, color=exit_color, line=dict(width=1, color=theme["card_bg"])),

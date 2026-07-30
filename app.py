@@ -19,7 +19,7 @@ from stock_ratings import (
 from portfolio_assistant import (
     build_portfolio, calculate_risk_score, get_snaptrade_positions,
 )
-from stock_chart import build_candlestick_chart, add_trade_markers
+from stock_chart import build_candlestick_chart, add_trade_markers, CANDLE_COLORS
 from pullback_indicator import check_pullback_risk
 st.set_page_config(page_title="Robinhood AI", page_icon="📈", layout="wide")
 theme = st.sidebar.radio("Theme", ["Dark", "Light"], horizontal=True)
@@ -1480,8 +1480,8 @@ def render_open_trade_card(trade: dict):
             st.warning(f"Couldn't load chart data for {ticker}.")
             return
         fig = build_candlestick_chart(ticker, history, t, theme, show_bollinger=False)
-        fig.add_hline(y=latest["target_price"], line_dash="dash", line_color=t["positive"], annotation_text="Target")
-        fig.add_hline(y=latest["stop_loss"], line_dash="dash", line_color=t["negative"], annotation_text="Stop")
+        fig.add_hline(y=latest["target_price"], line_dash="dash", line_color=CANDLE_COLORS["up"], annotation_text="Target")
+        fig.add_hline(y=latest["stop_loss"], line_dash="dash", line_color=CANDLE_COLORS["down"], annotation_text="Stop")
         add_trade_markers(fig, t, history, datetime.fromisoformat(latest["date_opened"]), latest["entry_price"])
         st.plotly_chart(fig, width="stretch", key=f"paper_trade_chart_{trade_id}")
 
@@ -1525,8 +1525,8 @@ def render_closed_positions_tab():
                 st.warning(f"Couldn't load chart data for {trade['ticker']}.")
                 continue
             fig = build_candlestick_chart(trade["ticker"], history, t, theme, show_bollinger=False)
-            fig.add_hline(y=trade["target_price"], line_dash="dash", line_color=t["positive"], annotation_text="Target")
-            fig.add_hline(y=trade["stop_loss"], line_dash="dash", line_color=t["negative"], annotation_text="Stop")
+            fig.add_hline(y=trade["target_price"], line_dash="dash", line_color=CANDLE_COLORS["up"], annotation_text="Target")
+            fig.add_hline(y=trade["stop_loss"], line_dash="dash", line_color=CANDLE_COLORS["down"], annotation_text="Stop")
             add_trade_markers(
                 fig, t, history,
                 datetime.fromisoformat(trade["date_opened"]), trade["entry_price"],
