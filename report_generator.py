@@ -18,8 +18,13 @@ from sources.base_source import SourceItem
 MARKET_TICKER = "MARKET"  # sentinel ticker for reports with no specific stock mentioned
 
 
-def get_technical_summary(ticker: str) -> dict:
-    """1y of history (not the usual 6mo) so a 200-day SMA is possible."""
+def get_technical_summary(ticker: str, include_news_score: bool = True) -> dict:
+    """1y of history (not the usual 6mo) so a 200-day SMA is possible.
+    include_news_score=False skips score_news()'s NewsAPI call entirely, using the
+    same neutral-default point value score_news itself falls back to when it finds
+    no articles — keeps score_100 on the same 0-100 scale without spending a request.
+    Callers that need to stay NewsAPI-free for their own rate-limit reasons (e.g. a
+    pre-filter run across dozens of candidates) should pass False."""
     stock = yf.Ticker(ticker)
     history = stock.history(period="1y")
     if history.empty or len(history) < 50:
@@ -41,7 +46,10 @@ def get_technical_summary(ticker: str) -> dict:
     rsi_points, rsi_note = score_rsi(rsi)
     macd_points, macd_note = score_macd(macd_line.iloc[-1], signal_line.iloc[-1])
     boll_points, boll_note = score_bollinger(latest_price, upper_band.iloc[-1], lower_band.iloc[-1])
-    news_points, news_note = score_news(ticker)
+    if include_news_score:
+        news_points, news_note = score_news(ticker)
+    else:
+        news_points, news_note = 10, "News score skipped (no NewsAPI call for this caller)"
     score_100 = trend_points + rsi_points + macd_points + boll_points + news_points
 
     sma_200_str = f"${sma_200:.2f}" if sma_200 is not None else "N/A (not enough history yet)"

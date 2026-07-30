@@ -21,7 +21,7 @@ def gather_signals(ticker: str) -> dict:
     can run against the whole candidate universe every scan cycle without worry."""
     return {
         "athena": analyze_stock(ticker),
-        "technical": get_technical_summary(ticker),
+        "technical": get_technical_summary(ticker, include_news_score=False),
         "tradingview_rating": get_tradingview_rating(ticker),
         "pullback_risk": check_pullback_risk(ticker),
         "smart_alerts": check_smart_alerts(ticker),
