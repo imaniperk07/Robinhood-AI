@@ -19,7 +19,7 @@ from stock_ratings import (
 from portfolio_assistant import (
     build_portfolio, calculate_risk_score, get_snaptrade_positions,
 )
-from stock_chart import build_candlestick_chart
+from stock_chart import build_candlestick_chart, add_trade_markers
 from pullback_indicator import check_pullback_risk
 st.set_page_config(page_title="Robinhood AI", page_icon="📈", layout="wide")
 theme = st.sidebar.radio("Theme", ["Dark", "Light"], horizontal=True)
@@ -1435,34 +1435,55 @@ def render_ai_agents():
 STARTING_PAPER_BALANCE = 10000.0
 
 
+def render_open_trade_card(trade: dict):
+    pl_class = pct_class(trade["profit_loss_pct"] or 0)
+    st.markdown(f"""
+    <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+            <div class="card-value">{trade['ticker']}</div>
+            <div style="display:flex; gap:6px;">
+                <span class="pill pill-{score_color(trade['trade_score'] or 0)}">Score {trade['trade_score']}/100</span>
+                <span class="pill pill-{pl_class}">{(trade['profit_loss_pct'] or 0):+.2f}%</span>
+            </div>
+        </div>
+        <div class="card-label" style="margin-top:10px;">
+            Entry ${trade['entry_price']:.2f} &rarr; Current ${trade['current_price']:.2f}
+            &nbsp;|&nbsp; Target ${trade['target_price']:.2f} &nbsp;|&nbsp; Stop ${trade['stop_loss']:.2f}
+        </div>
+        <div class="card-label" style="margin-top:4px;">
+            Risk: {trade['risk_level']} &nbsp;|&nbsp; Days Held: {trade['days_held']} &nbsp;|&nbsp;
+            Expected Hold: {trade['expected_holding_time']}
+        </div>
+        <div class="banner" style="margin-top:10px; margin-bottom:0;">{trade['reason_for_entry']}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    @st.fragment(run_every="60s")
+    def render_chart(trade_id=trade["id"], ticker=trade["ticker"]):
+        latest = storage.get_paper_trade(trade_id)
+        if not latest:
+            return
+        history = yf.Ticker(ticker).history(period="2mo")
+        if history.empty:
+            st.warning(f"Couldn't load chart data for {ticker}.")
+            return
+        fig = build_candlestick_chart(ticker, history, t, theme, show_bollinger=False)
+        fig.add_hline(y=latest["target_price"], line_dash="dash", line_color=t["positive"], annotation_text="Target")
+        fig.add_hline(y=latest["stop_loss"], line_dash="dash", line_color=t["negative"], annotation_text="Stop")
+        add_trade_markers(fig, t, history, datetime.fromisoformat(latest["date_opened"]), latest["entry_price"])
+        st.plotly_chart(fig, width="stretch", key=f"paper_trade_chart_{trade_id}")
+
+    render_chart()
+
+
 def render_open_positions_tab():
     open_trades = storage.get_open_paper_trades()
     if not open_trades:
         st.markdown('<div class="card-label">No open paper trades right now.</div>', unsafe_allow_html=True)
         return
 
-    for t in open_trades:
-        pl_class = pct_class(t["profit_loss_pct"] or 0)
-        st.markdown(f"""
-        <div class="card">
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
-                <div class="card-value">{t['ticker']}</div>
-                <div style="display:flex; gap:6px;">
-                    <span class="pill pill-{score_color(t['trade_score'] or 0)}">Score {t['trade_score']}/100</span>
-                    <span class="pill pill-{pl_class}">{(t['profit_loss_pct'] or 0):+.2f}%</span>
-                </div>
-            </div>
-            <div class="card-label" style="margin-top:10px;">
-                Entry ${t['entry_price']:.2f} &rarr; Current ${t['current_price']:.2f}
-                &nbsp;|&nbsp; Target ${t['target_price']:.2f} &nbsp;|&nbsp; Stop ${t['stop_loss']:.2f}
-            </div>
-            <div class="card-label" style="margin-top:4px;">
-                Risk: {t['risk_level']} &nbsp;|&nbsp; Days Held: {t['days_held']} &nbsp;|&nbsp;
-                Expected Hold: {t['expected_holding_time']}
-            </div>
-            <div class="banner" style="margin-top:10px; margin-bottom:0;">{t['reason_for_entry']}</div>
-        </div>
-        """, unsafe_allow_html=True)
+    for trade in open_trades:
+        render_open_trade_card(trade)
 
 
 def render_closed_positions_tab():
@@ -1471,20 +1492,36 @@ def render_closed_positions_tab():
         st.markdown('<div class="card-label">No closed paper trades yet.</div>', unsafe_allow_html=True)
         return
 
-    for t in closed_trades:
-        pl_class = pct_class(t["profit_loss_pct"] or 0)
-        exit_icon = {"Target Hit": "🎯", "Stop Loss": "🛑", "Expired": "⏳", "AI Exit": "🤖"}.get(t["exit_reason"], "📉")
+    for trade in closed_trades:
+        pl_class = pct_class(trade["profit_loss_pct"] or 0)
+        exit_icon = {"Target Hit": "🎯", "Stop Loss": "🛑", "Expired": "⏳", "AI Exit": "🤖"}.get(trade["exit_reason"], "📉")
         st.markdown(f"""
         <div class="card">
             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
-                <div class="card-value">{t['ticker']} <span class="pill pill-neutral" style="font-size:10px;">{exit_icon} {t['exit_reason']}</span></div>
-                <span class="pill pill-{pl_class}">{(t['profit_loss_pct'] or 0):+.2f}%</span>
+                <div class="card-value">{trade['ticker']} <span class="pill pill-neutral" style="font-size:10px;">{exit_icon} {trade['exit_reason']}</span></div>
+                <span class="pill pill-{pl_class}">{(trade['profit_loss_pct'] or 0):+.2f}%</span>
             </div>
             <div class="card-label" style="margin-top:10px;">
-                Entry ${t['entry_price']:.2f} &rarr; Exit ${t['current_price']:.2f} &nbsp;|&nbsp; Days Held: {t['days_held']}
+                Entry ${trade['entry_price']:.2f} &rarr; Exit ${trade['current_price']:.2f} &nbsp;|&nbsp; Days Held: {trade['days_held']}
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+        with st.expander("View Chart"):
+            history = yf.Ticker(trade["ticker"]).history(period="3mo")
+            if history.empty:
+                st.warning(f"Couldn't load chart data for {trade['ticker']}.")
+                continue
+            fig = build_candlestick_chart(trade["ticker"], history, t, theme, show_bollinger=False)
+            fig.add_hline(y=trade["target_price"], line_dash="dash", line_color=t["positive"], annotation_text="Target")
+            fig.add_hline(y=trade["stop_loss"], line_dash="dash", line_color=t["negative"], annotation_text="Stop")
+            add_trade_markers(
+                fig, t, history,
+                datetime.fromisoformat(trade["date_opened"]), trade["entry_price"],
+                datetime.fromisoformat(trade["date_closed"]), trade["current_price"],
+                is_win=(trade["profit_loss_pct"] or 0) > 0,
+            )
+            st.plotly_chart(fig, width="stretch", key=f"closed_trade_chart_{trade['id']}")
 
 
 def render_trade_journal_tab():

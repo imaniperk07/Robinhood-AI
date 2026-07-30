@@ -75,3 +75,45 @@ def build_candlestick_chart(
         hovermode="x unified", margin=dict(l=10, r=10, t=10, b=10), height=420,
     )
     return fig
+
+
+def add_trade_markers(
+    fig: go.Figure,
+    theme: dict,
+    history: pd.DataFrame,
+    entry_date,
+    entry_price: float,
+    exit_date=None,
+    exit_price: float | None = None,
+    is_win: bool | None = None,
+) -> go.Figure:
+    """Marks exactly where a paper trade opened (and closed, if finished) on an
+    existing candlestick figure. Snaps entry_date/exit_date to the nearest real candle
+    in history.index rather than plotting the raw stored timestamp — our dates are
+    stored as UTC isoformat strings while yfinance's index is exchange-local-tz, so a
+    raw plot could land a few hours off; snapping to the nearest actual candle
+    sidesteps that entirely and guarantees the marker always sits exactly on a real bar."""
+    def _nearest(date):
+        # Match by calendar date (in the exchange's own timezone), not raw timestamp
+        # distance — daily candles are exactly 24h apart, so an afternoon timestamp is
+        # numerically closer to the *next* day's midnight bar than the current day's,
+        # which silently rounds the marker forward a day on raw-distance nearest-match.
+        ts = pd.Timestamp(date)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        ts = ts.tz_convert(history.index.tz).normalize()
+        index_dates = history.index.normalize()
+        idx = index_dates.get_indexer([ts], method="nearest")[0]
+        return history.index[idx]
+
+    fig.add_trace(go.Scatter(
+        x=[_nearest(entry_date)], y=[entry_price], mode="markers", name="Entry",
+        marker=dict(symbol="triangle-up", size=14, color=theme["text"], line=dict(width=1, color=theme["card_bg"])),
+    ))
+    if exit_date is not None and exit_price is not None:
+        exit_color = theme["positive"] if is_win else theme["negative"]
+        fig.add_trace(go.Scatter(
+            x=[_nearest(exit_date)], y=[exit_price], mode="markers", name="Exit",
+            marker=dict(symbol="triangle-down", size=14, color=exit_color, line=dict(width=1, color=theme["card_bg"])),
+        ))
+    return fig
