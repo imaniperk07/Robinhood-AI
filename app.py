@@ -35,6 +35,7 @@ from memory_agent import load_memory, update_profile, clear_notes, get_journal_i
 from mentor import ask_mentor, get_categories as mentor_categories, get_terms as mentor_terms
 from wealth_builder import WEALTH_UNIVERSE, analyze_pick as wealth_analyze_pick, scan_universe as wealth_scan_universe
 from database import storage
+from alpaca_mirror import is_mirror_active
 from sources.base_source import build_manual_item
 from ticker_extractor import extract_tickers
 from report_generator import build_report, build_general_impact_report, MARKET_TICKER
@@ -287,17 +288,25 @@ def confidence_color(score: int) -> str:
         return "negative"
 
 
+def mirror_status_pill_html() -> str:
+    active = is_mirror_active()
+    label = "🟢 Alpaca Mirror: Active" if active else "⚪ Alpaca Mirror: Not Configured"
+    pill_class = "positive" if active else "neutral"
+    return f'<span class="pill pill-{pill_class}" style="display:inline-block;">{label}</span>'
+
+
 def render_mission_control():
     storage.init()
     open_trades = storage.get_open_paper_trades()
     closed_trades = storage.get_closed_paper_trades(limit=1000)
 
     if not open_trades and not closed_trades:
-        st.markdown("""
+        st.markdown(f"""
         <div class="banner" style="margin-bottom:16px;">
             🛰️ <b>Mission Control</b> — No local trading-engine data synced yet. The paper-trading
             engine runs locally (see Paper Trading page) and this deployment's database is separate
             from a local machine's, so data only shows up here once the engine has run on this device.
+            <div style="margin-top:10px;">{mirror_status_pill_html()}</div>
         </div>
         """, unsafe_allow_html=True)
         return
@@ -336,7 +345,7 @@ def render_mission_control():
     <div class="card"><div class="card-label">LATEST TRADE</div><div class="card-value" style="font-size:16px;">{latest_trade['ticker'] if latest_trade else 'N/A'}</div></div>
     """, unsafe_allow_html=True)
 
-    detail_cols = st.columns(2)
+    detail_cols = st.columns(3)
     if highest_confidence:
         detail_cols[0].markdown(f"""
         <div class="card"><div class="card-label">HIGHEST CONFIDENCE OPEN</div><div class="card-value" style="font-size:16px;">{highest_confidence['ticker']} — {highest_confidence['trade_score']}/100</div></div>
@@ -347,6 +356,9 @@ def render_mission_control():
         """, unsafe_allow_html=True)
     detail_cols[1].markdown(f"""
     <div class="card"><div class="card-label">LAST ENGINE ACTIVITY</div><div class="card-value" style="font-size:16px;">{last_activity[:16].replace('T', ' ') if last_activity else 'N/A'} UTC</div></div>
+    """, unsafe_allow_html=True)
+    detail_cols[2].markdown(f"""
+    <div class="card"><div class="card-label">MIRROR STATUS</div><div style="margin-top:6px;">{mirror_status_pill_html()}</div></div>
     """, unsafe_allow_html=True)
 
 
@@ -1622,6 +1634,7 @@ def render_paper_trading():
     storage.init()
     st.markdown('<div class="hero-headline">Paper Trading.</div>', unsafe_allow_html=True)
     st.caption("100% simulated — no real brokerage, no real money. Validates trade decision-making before any live execution is ever considered.")
+    st.markdown(mirror_status_pill_html(), unsafe_allow_html=True)
 
     tab_open, tab_closed, tab_journal, tab_performance = st.tabs(
         ["Open Positions", "Closed Positions", "Journal", "Performance"]

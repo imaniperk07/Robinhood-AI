@@ -13,6 +13,7 @@ from trade_decision_engine import (
     CONFIDENCE_THRESHOLD, POSITION_SIZE_USD,
 )
 from discord_notifier import post_trade_opened, post_trade_closed
+from alpaca_mirror import mirror_open_trade, mirror_close_trade
 
 MONITOR_INTERVAL_SECONDS = 5 * 60    # fast loop: pure price checks on open trades
 SCAN_INTERVAL_SECONDS = 60 * 60      # slow loop: evaluate new candidates + thesis decay
@@ -102,6 +103,10 @@ async def scan_for_new_trades() -> None:
             post_trade_opened(trade)
         except Exception as e:
             print(f"  Notification failed: {e}")
+        try:
+            mirror_open_trade(ticker, shares)
+        except Exception as e:
+            print(f"  Alpaca mirror failed: {e}")
 
 
 def _close_trade(trade: dict, updates: dict, exit_reason: str, lessons: str) -> None:
@@ -122,6 +127,10 @@ def _close_trade(trade: dict, updates: dict, exit_reason: str, lessons: str) -> 
         post_trade_closed(trade)
     except Exception as e:
         print(f"  Notification failed: {e}")
+    try:
+        mirror_close_trade(trade["ticker"])
+    except Exception as e:
+        print(f"  Alpaca mirror failed: {e}")
 
 
 async def monitor_open_trades() -> None:
