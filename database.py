@@ -70,7 +70,9 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     profit_loss_pct REAL,
     highest_gain_pct REAL,
     largest_drawdown_pct REAL,
-    days_held INTEGER
+    days_held INTEGER,
+    strategy_type TEXT,
+    primary_strategy TEXT
 );
 CREATE TABLE IF NOT EXISTS trade_journal (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -161,6 +163,9 @@ class Storage(ABC):
     @abstractmethod
     def get_trade_journal(self, trade_id: int) -> dict | None: ...
 
+    @abstractmethod
+    def get_strategy_performance(self) -> list[dict]: ...
+
 
 class SQLiteStorage(Storage):
     """v0.1 backend — a local SQLite file. Ephemeral on Streamlit Cloud's free tier
@@ -180,6 +185,15 @@ class SQLiteStorage(Storage):
     def init(self) -> None:
         with self._get_connection() as conn:
             conn.executescript(SCHEMA)
+            # CREATE TABLE IF NOT EXISTS only affects fresh databases — a pre-existing
+            # local paper_trades table needs these columns added explicitly. SQLite has
+            # no "ADD COLUMN IF NOT EXISTS", so just swallow the "duplicate column" error
+            # on every subsequent run after the first.
+            for column_def in ("strategy_type TEXT", "primary_strategy TEXT"):
+                try:
+                    conn.execute(f"ALTER TABLE paper_trades ADD COLUMN {column_def}")
+                except sqlite3.OperationalError:
+                    pass
             conn.commit()
 
     def save_source_item(self, item: SourceItem) -> int:
@@ -352,8 +366,8 @@ class SQLiteStorage(Storage):
                     ticker, entry_price, target_price, stop_loss, position_size_usd, shares,
                     trade_score, athena_confidence, risk_level, reason_for_entry, expected_holding_time,
                     date_opened, date_closed, status, exit_reason, current_price, profit_loss_pct,
-                    highest_gain_pct, largest_drawdown_pct, days_held
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    highest_gain_pct, largest_drawdown_pct, days_held, strategy_type, primary_strategy
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     trade["ticker"], trade["entry_price"], trade.get("target_price"), trade.get("stop_loss"),
                     trade.get("position_size_usd"), trade.get("shares"), trade.get("trade_score"),
@@ -361,7 +375,7 @@ class SQLiteStorage(Storage):
                     trade.get("expected_holding_time"), trade.get("date_opened"), trade.get("date_closed"),
                     trade.get("status", "Open"), trade.get("exit_reason"), trade.get("current_price"),
                     trade.get("profit_loss_pct"), trade.get("highest_gain_pct"), trade.get("largest_drawdown_pct"),
-                    trade.get("days_held"),
+                    trade.get("days_held"), trade.get("strategy_type"), trade.get("primary_strategy"),
                 ),
             )
             conn.commit()
@@ -433,6 +447,32 @@ class SQLiteStorage(Storage):
                 "SELECT * FROM trade_journal WHERE trade_id = ? ORDER BY id DESC LIMIT 1", (trade_id,)
             ).fetchone()
             return dict(row) if row else None
+
+    def get_strategy_performance(self) -> list[dict]:
+        """Per-strategy aggregates over every closed trade — same 'aggregate in Python'
+        style as the Performance tab's overall stats, just grouped by primary_strategy
+        instead of computed globally."""
+        closed = self.get_closed_paper_trades(limit=10000)
+        by_strategy: dict[str, list[dict]] = {}
+        for trade in closed:
+            name = trade.get("primary_strategy") or "Unclassified"
+            by_strategy.setdefault(name, []).append(trade)
+
+        results = []
+        for name, trades in by_strategy.items():
+            wins = [t for t in trades if (t["profit_loss_pct"] or 0) > 0]
+            total_pl_usd = sum((t["position_size_usd"] or 0) * (t["profit_loss_pct"] or 0) / 100 for t in trades)
+            results.append({
+                "strategy": name,
+                "strategy_type": trades[0].get("strategy_type"),
+                "total_trades": len(trades),
+                "win_rate": round(len(wins) / len(trades) * 100, 1) if trades else 0.0,
+                "avg_return_pct": round(sum(t["profit_loss_pct"] or 0 for t in trades) / len(trades), 2) if trades else 0.0,
+                "total_pl_usd": round(total_pl_usd, 2),
+                "avg_confidence": round(sum(t["trade_score"] or 0 for t in trades) / len(trades), 1) if trades else 0.0,
+            })
+        results.sort(key=lambda r: r["win_rate"], reverse=True)
+        return results
 
 
 storage: Storage = SQLiteStorage()
