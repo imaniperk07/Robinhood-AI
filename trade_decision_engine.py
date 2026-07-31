@@ -14,10 +14,33 @@ from news_analysis import get_news
 from dashboard import INDICES, get_index_data, overall_sentiment
 from jarvis import client, MODEL
 from ai_cost_tracker import track_ai_usage
+from database import storage
 
 CONFIDENCE_THRESHOLD = 75  # 0-100 scale, matches Athena/Opportunity Hunter/Wealth Builder
 POSITION_SIZE_USD = 500
 MIN_REWARD_RISK_RATIO = 1.5  # target_pct must be at least this many times stop_loss_pct
+MIN_TRADES_FOR_TRACK_RECORD = 5  # don't feed a strategy's history back until it's a real sample
+
+# Controlled vocabulary, not free text — keeps get_strategy_performance()'s aggregation
+# clean instead of fragmenting into slightly-different strings per trade.
+SWING_STRATEGIES = [
+    "Trend Pullback", "Support/Resistance Bounce", "Breakout Confirmation",
+    "Candlestick Reversal", "Momentum Continuation", "Fundamental + Technical Confluence",
+]
+DAY_STRATEGIES = [
+    "Opening Range Breakout", "Gap & Go", "Gap Fade", "VWAP Bounce", "VWAP Rejection",
+    "Inside Bar Breakout", "Bull Flag Continuation", "Candlestick Reversal",
+]
+
+
+def get_strategy_track_record(strategy_name: str) -> dict | None:
+    """This strategy's own historical performance on this system, for feeding back into
+    the evaluation prompt — the feedback loop that lets consistently-good strategies earn
+    a bit more benefit of the doubt over time. None until there's a real sample size."""
+    for row in storage.get_strategy_performance():
+        if row["strategy"] == strategy_name and row["total_trades"] >= MIN_TRADES_FOR_TRACK_RECORD:
+            return row
+    return None
 
 
 def get_volume_confirmation(ticker: str) -> dict | None:
@@ -82,6 +105,20 @@ def get_market_sentiment() -> str:
     return overall_sentiment(results) if results else "Unknown"
 
 
+def format_track_record_context(strategy_names: list[str]) -> str:
+    """One line per strategy with a real track record (>= MIN_TRADES_FOR_TRACK_RECORD
+    closed trades), for the caller to fold into its prompt before Claude picks which
+    strategy applies — lets a consistently-good strategy earn a bit more benefit of the
+    doubt, and a consistently-poor one get more scrutiny, without a separate ML system."""
+    lines = []
+    for name in strategy_names:
+        record = get_strategy_track_record(name)
+        if record:
+            lines.append(f"- {name}: {record['win_rate']}% win rate over {record['total_trades']} trades, "
+                          f"avg return {record['avg_return_pct']:+.2f}%")
+    return "\n".join(lines) if lines else "No strategy has a large enough sample yet (fewer than 5 closed trades each)."
+
+
 def evaluate_trade(ticker: str, signals: dict, market_sentiment: str, portfolio_tickers: list[str]) -> dict | None:
     """One Claude call combining every gathered signal + fresh news into a final trade
     decision. Only call this for tickers that already passed passes_prefilter() — this
@@ -114,11 +151,17 @@ def evaluate_trade(ticker: str, signals: dict, market_sentiment: str, portfolio_
     else:
         volume_line = "unavailable"
 
+    track_record_context = format_track_record_context(SWING_STRATEGIES)
+
     prompt = f"""Today's date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}
 Evaluate {ticker} as a candidate SWING TRADE (holding period of days to a few weeks) using
 ONLY the signals below — don't use outside knowledge about the company. Work through these
 five checks in order before deciding — don't just average the numbers, reason about whether
 each one genuinely supports the trade:
+
+This system's own track record so far, by strategy (factor this in, but don't let a small
+sample override what you're actually seeing in the signals below):
+{track_record_context}
 
 1. NEWS & CATALYSTS — is there a real catalyst, or is this just noise?
    Recent news headlines: {headlines or 'none found'}
@@ -160,6 +203,7 @@ Assume entry near the current market price (not provided here — the caller fil
 real fill price). Respond with ONLY valid JSON in exactly this shape, no other text:
 {{"probability_score": <integer 0-100, overall confidence this is a good swing trade right now>,
   "risk_level": "LOW" | "MODERATE" | "HIGH",
+  "primary_strategy": <the ONE strategy from this list that most decisively drove this decision — exactly one of: {SWING_STRATEGIES}>,
   "target_pct": <float, suggested target as a % gain from entry, e.g. 8.0>,
   "stop_loss_pct": <float, suggested stop-loss as a % loss from entry, e.g. 4.0>,
   "expected_holding_time": "<short phrase, e.g. '3-10 trading days'>",
@@ -187,6 +231,9 @@ real fill price). Respond with ONLY valid JSON in exactly this shape, no other t
     decision["athena_confidence"] = athena["confidence_score"]
     decision["news_summary"] = "; ".join(headlines[:3]) or "No recent headlines found."
     decision["technical_analysis"] = technical["summary"]
+    decision["strategy_type"] = "Swing"
+    if decision.get("primary_strategy") not in SWING_STRATEGIES:
+        decision["primary_strategy"] = "Fundamental + Technical Confluence"  # safe fallback if Claude drifts off-list
     return decision
 
 
