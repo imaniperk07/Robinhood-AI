@@ -79,12 +79,18 @@ async def scan_for_new_trades() -> None:
         print(f"  Evaluating the top {len(shortlist)}: {', '.join(t for _, t, _ in shortlist)}")
 
     for _strength, ticker, signals in shortlist:
+        print(f"  Evaluating {ticker}...")
         decision = evaluate_trade(ticker, signals, market_sentiment, portfolio_tickers)
-        if not decision or decision["probability_score"] < CONFIDENCE_THRESHOLD:
+        if not decision:
+            print(f"    {ticker}: evaluation failed, skipping.")
+            continue
+        if decision["probability_score"] < CONFIDENCE_THRESHOLD:
+            print(f"    {ticker}: score {decision['probability_score']} < threshold {CONFIDENCE_THRESHOLD}, skipping.")
             continue
 
         entry_price = get_current_price(ticker)
         if entry_price is None:
+            print(f"    {ticker}: couldn't get a current price, skipping.")
             continue
 
         target_price = entry_price * (1 + decision["target_pct"] / 100)
@@ -118,6 +124,8 @@ async def scan_for_new_trades() -> None:
             mirror_open_trade(ticker, shares)
         except Exception as e:
             print(f"  Alpaca mirror failed: {e}")
+
+    print(f"[{datetime.now(timezone.utc).isoformat()}] Scan complete. Idling until the next cycle.")
 
 
 def _close_trade(trade: dict, updates: dict, exit_reason: str, lessons: str) -> None:
@@ -214,6 +222,8 @@ async def run() -> None:
             await scan_for_new_trades()
             await check_thesis_decay()
             last_scan = now
+        open_count = len(storage.get_open_paper_trades())
+        print(f"[{datetime.now(timezone.utc).isoformat()}] Heartbeat — {open_count} open trade(s). Next check in {MONITOR_INTERVAL_SECONDS // 60} min.")
         await asyncio.sleep(MONITOR_INTERVAL_SECONDS)
 
 
