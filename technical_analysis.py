@@ -1,6 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import talib
 
 WATCHLIST = ["AAPL", "MSFT", "NVDA", "JPM", "JNJ", "XOM", "KO", "DIS", "TSLA", "AMD"]
 
@@ -47,6 +48,21 @@ def calculate_support_resistance(history: pd.DataFrame, window: int = 20) -> tup
     support = recent["Low"].min()
     resistance = recent["High"].max()
     return support, resistance
+
+
+def detect_candlestick_patterns(history: pd.DataFrame) -> list[dict]:
+    """Runs every TA-Lib candlestick pattern function against the most recent candle.
+    Returns only patterns that actually fired, as [{"name": "Engulfing", "signal": "Bullish"}, ...] —
+    a pattern firing doesn't mean the trade is good on its own, just that it's present;
+    callers should weigh it against trend context and support/resistance location."""
+    o, h, l, c = history["Open"], history["High"], history["Low"], history["Close"]
+    detected = []
+    for func_name in (f for f in dir(talib) if f.startswith("CDL")):
+        result = getattr(talib, func_name)(o, h, l, c)
+        latest = result.iloc[-1]
+        if latest != 0:
+            detected.append({"name": func_name.replace("CDL", ""), "signal": "Bullish" if latest > 0 else "Bearish"})
+    return detected
 
 
 def interpret_rsi(rsi_value: float) -> str:

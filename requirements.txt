@@ -10,3 +10,4 @@ discord.py==2.7.1
 plotly==6.9.0
 tradingview-ta==3.3.0
 alpaca-py==0.43.5
+TA-Lib==0.7.1

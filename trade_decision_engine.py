@@ -8,6 +8,7 @@ from report_generator import get_technical_summary
 from tradingview_ratings import get_rating as get_tradingview_rating
 from pullback_indicator import check_pullback_risk
 from smart_alerts import check_ticker as check_smart_alerts
+from technical_analysis import detect_candlestick_patterns
 from fact_checker import get_earnings_date, strip_json_fence
 from news_analysis import get_news
 from dashboard import INDICES, get_index_data, overall_sentiment
@@ -36,6 +37,15 @@ def get_volume_confirmation(ticker: str) -> dict | None:
     return {"volume_ratio": round(float(ratio), 2), "confirmed": bool(ratio >= 1.0)}
 
 
+def get_candlestick_signals(ticker: str) -> list[dict]:
+    """Candlestick patterns on the most recent candle, via TA-Lib. 3mo lookback gives
+    enough prior-trend context for reversal patterns to actually mean something."""
+    history = yf.Ticker(ticker).history(period="3mo")
+    if history.empty:
+        return []
+    return detect_candlestick_patterns(history)
+
+
 def gather_signals(ticker: str) -> dict:
     """Cheap signals only — no NewsAPI, no Claude. Used for the pre-filter, so this
     can run against the whole candidate universe every scan cycle without worry."""
@@ -46,6 +56,7 @@ def gather_signals(ticker: str) -> dict:
         "pullback_risk": check_pullback_risk(ticker),
         "smart_alerts": check_smart_alerts(ticker),
         "volume": get_volume_confirmation(ticker),
+        "candlestick_patterns": get_candlestick_signals(ticker),
     }
 
 
@@ -90,7 +101,13 @@ def evaluate_trade(ticker: str, signals: dict, market_sentiment: str, portfolio_
     pullback = signals.get("pullback_risk")
     alerts = signals.get("smart_alerts") or []
     volume = signals.get("volume")
+    patterns = signals.get("candlestick_patterns") or []
     headlines = [a.get("title", "") for a in recent_news]
+
+    if patterns:
+        pattern_line = ", ".join(f"{p['name']} ({p['signal']})" for p in patterns)
+    else:
+        pattern_line = "none detected"
 
     if volume:
         volume_line = f"{volume['volume_ratio']}x its 20-day average ({'confirms' if volume['confirmed'] else 'does NOT confirm'} the move)"
@@ -113,6 +130,15 @@ each one genuinely supports the trade:
    TradingView technical rating: {tv_rating or 'unavailable'}
    Pullback/overextension risk: {pullback['risk_level'] if pullback else 'unavailable'} ({pullback['signals'] if pullback else []})
    Other alerts triggered: {alerts or 'none'}
+   Candlestick patterns on the most recent candle: {pattern_line}
+   Weigh any detected pattern using two filters, don't treat it as automatically meaningful:
+   (a) LOCATION — the technical summary above states the current support/resistance levels;
+   a pattern near one of those levels is far more meaningful than the same pattern in open
+   air, away from any level.
+   (b) TREND CONTEXT — a reversal pattern only matters in the context of an existing trend to
+   reverse (e.g. a bullish reversal pattern after a downtrend is meaningful; the same pattern
+   with no prior trend, or fighting an already-strong trend in the pattern's own direction, is
+   closer to noise).
 
 3. VOLUME CONFIRMATION — is the move backed by real participation, or thin/low-conviction trading?
    Today's volume vs 20-day average: {volume_line}
