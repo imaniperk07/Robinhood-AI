@@ -1449,10 +1449,11 @@ STARTING_PAPER_BALANCE = 10000.0
 
 def render_open_trade_card(trade: dict):
     pl_class = pct_class(trade["profit_loss_pct"] or 0)
+    strategy_label = f"{trade.get('primary_strategy') or 'Unclassified'} &middot; {trade.get('strategy_type') or '?'}"
     st.markdown(f"""
     <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
-            <div class="card-value">{trade['ticker']}</div>
+            <div class="card-value">{trade['ticker']} <span class="pill pill-neutral" style="font-size:10px;">{strategy_label}</span></div>
             <div style="display:flex; gap:6px;">
                 <span class="pill pill-{score_color(trade['trade_score'] or 0)}">Score {trade['trade_score']}/100</span>
                 <span class="pill pill-{pl_class}">{(trade['profit_loss_pct'] or 0):+.2f}%</span>
@@ -1507,11 +1508,15 @@ def render_closed_positions_tab():
     for trade in closed_trades:
         pl_class = pct_class(trade["profit_loss_pct"] or 0)
         exit_icon = {"Target Hit": "🎯", "Stop Loss": "🛑", "Expired": "⏳", "AI Exit": "🤖"}.get(trade["exit_reason"], "📉")
+        strategy_label = f"{trade.get('primary_strategy') or 'Unclassified'} &middot; {trade.get('strategy_type') or '?'}"
         st.markdown(f"""
         <div class="card">
             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
                 <div class="card-value">{trade['ticker']} <span class="pill pill-neutral" style="font-size:10px;">{exit_icon} {trade['exit_reason']}</span></div>
                 <span class="pill pill-{pl_class}">{(trade['profit_loss_pct'] or 0):+.2f}%</span>
+            </div>
+            <div class="card-label" style="margin-top:6px;">
+                <span class="pill pill-neutral" style="font-size:10px;">{strategy_label}</span>
             </div>
             <div class="card-label" style="margin-top:10px;">
                 Entry ${trade['entry_price']:.2f} &rarr; Exit ${trade['current_price']:.2f} &nbsp;|&nbsp; Days Held: {trade['days_held']}
@@ -1630,14 +1635,42 @@ def render_paper_trading_performance_tab():
     """, unsafe_allow_html=True)
 
 
+def render_strategy_performance_tab():
+    st.caption("Per-strategy track record — which named strategies (Opening Range Breakout, Bull Flag, "
+               "Trend Pullback, etc.) are actually working, so the system can favor them over time.")
+    performance = storage.get_strategy_performance()
+    if not performance:
+        st.markdown('<div class="card-label">No closed trades yet — strategy performance needs at least one completed trade.</div>', unsafe_allow_html=True)
+        return
+
+    for row in performance:
+        win_rate_class = score_color(row["win_rate"])
+        pl_class = pct_class(row["total_pl_usd"])
+        st.markdown(f"""
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+                <div class="card-value">{row['strategy']} <span class="pill pill-neutral" style="font-size:10px;">{row['strategy_type'] or '?'}</span></div>
+                <span class="pill pill-{win_rate_class}">{row['win_rate']}% win rate</span>
+            </div>
+            <div class="card-label" style="margin-top:10px;">
+                Total Trades: {row['total_trades']} &nbsp;|&nbsp; Avg Return: {row['avg_return_pct']:+.2f}%
+                &nbsp;|&nbsp; Avg Confidence: {row['avg_confidence']}/100
+            </div>
+            <div class="card-label" style="margin-top:4px;">
+                Total P/L: <span class="{pl_class}">${row['total_pl_usd']:+,.2f}</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
 def render_paper_trading():
     storage.init()
     st.markdown('<div class="hero-headline">Paper Trading.</div>', unsafe_allow_html=True)
     st.caption("100% simulated — no real brokerage, no real money. Validates trade decision-making before any live execution is ever considered.")
     st.markdown(mirror_status_pill_html(), unsafe_allow_html=True)
 
-    tab_open, tab_closed, tab_journal, tab_performance = st.tabs(
-        ["Open Positions", "Closed Positions", "Journal", "Performance"]
+    tab_open, tab_closed, tab_journal, tab_performance, tab_strategy = st.tabs(
+        ["Open Positions", "Closed Positions", "Journal", "Performance", "Strategy Performance"]
     )
     with tab_open:
         render_open_positions_tab()
@@ -1647,6 +1680,8 @@ def render_paper_trading():
         render_trade_journal_tab()
     with tab_performance:
         render_paper_trading_performance_tab()
+    with tab_strategy:
+        render_strategy_performance_tab()
 
 
 # ---------------- Sidebar navigation ----------------
