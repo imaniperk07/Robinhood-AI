@@ -1,6 +1,8 @@
 import json
 from datetime import datetime, timezone
 
+import yfinance as yf
+
 from athena import analyze_stock
 from report_generator import get_technical_summary
 from tradingview_ratings import get_rating as get_tradingview_rating
@@ -14,6 +16,24 @@ from ai_cost_tracker import track_ai_usage
 
 CONFIDENCE_THRESHOLD = 75  # 0-100 scale, matches Athena/Opportunity Hunter/Wealth Builder
 POSITION_SIZE_USD = 500
+MIN_REWARD_RISK_RATIO = 1.5  # target_pct must be at least this many times stop_loss_pct
+
+
+def get_volume_confirmation(ticker: str) -> dict | None:
+    """Is the current move actually backed by real trading volume, or just price
+    drifting on thin volume? Unlike smart_alerts' volume-spike check (which only
+    speaks up when volume is unusually high), this always reports the ratio so it can
+    be weighed as a genuine confirmation signal, not just an anomaly alert."""
+    history = yf.Ticker(ticker).history(period="1mo")
+    if len(history) < 21:
+        return None
+    volumes = history["Volume"]
+    today_volume = volumes.iloc[-1]
+    avg_volume_20d = volumes.iloc[-21:-1].mean()
+    if avg_volume_20d <= 0:
+        return None
+    ratio = today_volume / avg_volume_20d
+    return {"volume_ratio": round(float(ratio), 2), "confirmed": bool(ratio >= 1.0)}
 
 
 def gather_signals(ticker: str) -> dict:
@@ -25,6 +45,7 @@ def gather_signals(ticker: str) -> dict:
         "tradingview_rating": get_tradingview_rating(ticker),
         "pullback_risk": check_pullback_risk(ticker),
         "smart_alerts": check_smart_alerts(ticker),
+        "volume": get_volume_confirmation(ticker),
     }
 
 
@@ -68,28 +89,46 @@ def evaluate_trade(ticker: str, signals: dict, market_sentiment: str, portfolio_
     tv_rating = signals.get("tradingview_rating")
     pullback = signals.get("pullback_risk")
     alerts = signals.get("smart_alerts") or []
+    volume = signals.get("volume")
     headlines = [a.get("title", "") for a in recent_news]
+
+    if volume:
+        volume_line = f"{volume['volume_ratio']}x its 20-day average ({'confirms' if volume['confirmed'] else 'does NOT confirm'} the move)"
+    else:
+        volume_line = "unavailable"
 
     prompt = f"""Today's date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}
 Evaluate {ticker} as a candidate SWING TRADE (holding period of days to a few weeks) using
-ONLY the signals below — don't use outside knowledge about the company.
+ONLY the signals below — don't use outside knowledge about the company. Work through these
+five checks in order before deciding — don't just average the numbers, reason about whether
+each one genuinely supports the trade:
 
-Athena fundamental confidence: {athena['confidence_score']}/100
-Bull case: {athena['bull_case']}
-Bear case: {athena['bear_case']}
+1. NEWS & CATALYSTS — is there a real catalyst, or is this just noise?
+   Recent news headlines: {headlines or 'none found'}
+   Next/most recent earnings date: {earnings_date or 'unknown'} (an earnings date inside the
+   expected holding window is a real risk, not a catalyst to trade around blindly)
 
-Technical summary: {technical['summary']} (score {technical['score_100']}/100)
+2. TREND CONFIRMATION — does the technical picture actually confirm a tradeable trend?
+   Technical summary: {technical['summary']} (score {technical['score_100']}/100)
+   TradingView technical rating: {tv_rating or 'unavailable'}
+   Pullback/overextension risk: {pullback['risk_level'] if pullback else 'unavailable'} ({pullback['signals'] if pullback else []})
+   Other alerts triggered: {alerts or 'none'}
 
-TradingView technical rating: {tv_rating or 'unavailable'}
+3. VOLUME CONFIRMATION — is the move backed by real participation, or thin/low-conviction trading?
+   Today's volume vs 20-day average: {volume_line}
 
-Pullback/overextension risk: {pullback['risk_level'] if pullback else 'unavailable'} ({pullback['signals'] if pullback else []})
+4. MARKET DIRECTION — does the broader market support this trade, or is it fighting the tape?
+   Overall market sentiment today: {market_sentiment}
 
-Smart alerts triggered: {alerts or 'none'}
-
-Recent news headlines: {headlines or 'none found'}
-Next/most recent earnings date: {earnings_date or 'unknown'}
-
-Overall market sentiment today: {market_sentiment}
+5. FUNDAMENTAL BACKDROP & RISK/REWARD — is the underlying business sound, and does the
+   trade offer meaningfully more upside than downside?
+   Athena fundamental confidence: {athena['confidence_score']}/100
+   Bull case: {athena['bull_case']}
+   Bear case: {athena['bear_case']}
+   Your suggested target_pct MUST be at least {MIN_REWARD_RISK_RATIO}x your suggested
+   stop_loss_pct — if you can't find a stop/target pair with a genuinely favorable
+   risk/reward, say so honestly with a low probability_score rather than forcing a ratio
+   that technically clears {MIN_REWARD_RISK_RATIO}x but isn't realistic for this setup.
 
 Assume entry near the current market price (not provided here — the caller fills in the
 real fill price). Respond with ONLY valid JSON in exactly this shape, no other text:
@@ -98,7 +137,7 @@ real fill price). Respond with ONLY valid JSON in exactly this shape, no other t
   "target_pct": <float, suggested target as a % gain from entry, e.g. 8.0>,
   "stop_loss_pct": <float, suggested stop-loss as a % loss from entry, e.g. 4.0>,
   "expected_holding_time": "<short phrase, e.g. '3-10 trading days'>",
-  "reason_for_entry": "<2-3 sentences citing the specific signals above>"}}"""
+  "reason_for_entry": "<2-3 sentences citing the specific signals above, addressing at least the catalyst, volume, and risk/reward checks>"}}"""
 
     try:
         response = client.messages.create(

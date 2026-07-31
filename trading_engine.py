@@ -10,7 +10,7 @@ from opportunity_hunter import UNIVERSE
 from wealth_builder import WEALTH_UNIVERSE
 from trade_decision_engine import (
     gather_signals, passes_prefilter, evaluate_trade, get_market_sentiment,
-    CONFIDENCE_THRESHOLD, POSITION_SIZE_USD,
+    CONFIDENCE_THRESHOLD, POSITION_SIZE_USD, MIN_REWARD_RISK_RATIO,
 )
 from discord_notifier import post_trade_opened, post_trade_closed
 from alpaca_mirror import mirror_open_trade, mirror_close_trade
@@ -86,6 +86,12 @@ async def scan_for_new_trades() -> None:
             continue
         if decision["probability_score"] < CONFIDENCE_THRESHOLD:
             print(f"    {ticker}: score {decision['probability_score']} < threshold {CONFIDENCE_THRESHOLD}, skipping.")
+            continue
+
+        reward_risk_ratio = decision["target_pct"] / decision["stop_loss_pct"] if decision.get("stop_loss_pct") else 0
+        if reward_risk_ratio < MIN_REWARD_RISK_RATIO:
+            print(f"    {ticker}: reward:risk {reward_risk_ratio:.2f} < minimum {MIN_REWARD_RISK_RATIO}, skipping "
+                  f"(target {decision['target_pct']}% / stop {decision['stop_loss_pct']}%).")
             continue
 
         entry_price = get_current_price(ticker)
